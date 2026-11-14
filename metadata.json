@@ -1,0 +1,8 @@
+{
+  "name": "Tra Cứu Nhiệt Độ Bảo Quản & Thời Hạn Sử Dụng Thực Phẩm - BNC",
+  "description": "Hệ thống tra cứu nhiệt độ bảo quản và thời hạn sử dụng thực phẩm - Ban Ẩm Thực Sun World Ba Na Hills.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

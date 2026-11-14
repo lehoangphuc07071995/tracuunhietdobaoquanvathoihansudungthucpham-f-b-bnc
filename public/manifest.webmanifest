@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "Hệ Thống Tra Cứu Nhiệt Độ Bảo Quản & Thời Hạn Sử Dụng Thực Phẩm - BNC",
+  "short_name": "Tra Cứu BNC",
+  "description": "Hệ thống tra cứu nhiệt độ bảo quản và thời hạn sử dụng thực phẩm - Ban Ẩm Thực Sun World Ba Na Hills.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#122A47",
+  "theme_color": "#122A47",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
