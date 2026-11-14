@@ -252,6 +252,9 @@ export default function App() {
   const toastTimerRef = useRef<number | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiLastKeyRef = useRef<string>('');
+  const aiEndpointAvailableRef = useRef<boolean>(
+    typeof window !== 'undefined' ? window.location.protocol !== 'file:' : true
+  );
 
   const appendixCounts = useMemo(() => {
     let pl1 = 0;
@@ -371,6 +374,12 @@ export default function App() {
         return;
       }
 
+      if (!aiEndpointAvailableRef.current) {
+        setAiMatchedCodes([]);
+        setAiReason('');
+        return;
+      }
+
       const requestKey = `${targetLang}::${q.toLowerCase()}`;
       aiAbortRef.current?.abort();
       const controller = new AbortController();
@@ -385,6 +394,9 @@ export default function App() {
           signal: controller.signal,
         });
 
+        if (response.status === 404 || response.status === 405) {
+          aiEndpointAvailableRef.current = false;
+        }
         if (!response.ok) {
           setAiMatchedCodes([]);
           setAiReason('');
