@@ -62,6 +62,7 @@ interface ExtraLabels {
   mobileTitleLine1: string;
   mobileTitleLine2: string;
   mobileSearchPlaceholder: string;
+  footerInternal: string;
 }
 
 const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
@@ -82,6 +83,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine1: 'HỆ THỐNG TRA CỨU',
     mobileTitleLine2: 'NHIỆT ĐỘ BẢO QUẢN & THỜI HẠN SỬ DỤNG THỰC PHẨM',
     mobileSearchPlaceholder: 'Tìm món, mã PL1-01, bảo quản...',
+    footerInternal: 'HỆ THỐNG LƯU HÀNH NỘI BỘ',
   },
   EN: {
     aiTag: 'AI Smart Search',
@@ -100,6 +102,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine1: 'LOOKUP SYSTEM',
     mobileTitleLine2: 'FOOD STORAGE TEMPERATURE & SHELF LIFE',
     mobileSearchPlaceholder: 'Search item, PL1-01, storage...',
+    footerInternal: 'INTERNAL CIRCULATION SYSTEM',
   },
   KO: {
     aiTag: 'AI 스마트 검색',
@@ -118,6 +121,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine1: '식품 보관 조회 시스템',
     mobileTitleLine2: '식품 보관 온도 및 유통기한 기준표',
     mobileSearchPlaceholder: '품목, PL1-01, 보관 기준 검색...',
+    footerInternal: '사내 전용 배포 시스템',
   },
   HI: {
     aiTag: 'AI स्मार्ट खोज',
@@ -136,6 +140,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine1: 'खाद्य भंडारण खोज प्रणाली',
     mobileTitleLine2: 'खाद्य भंडारण तापमान और शेल्फ लाइफ मानक',
     mobileSearchPlaceholder: 'आइटम, PL1-01, भंडारण खोजें...',
+    footerInternal: 'आंतरिक परिचालन प्रणाली',
   },
 };
 
@@ -162,28 +167,26 @@ function StorageCell({
   value,
   tone,
   icon,
-  hideHint,
-  emptyCellHint,
 }: StorageCellProps) {
   const empty = isEmptyCell(value);
-  const toneClasses =
-    empty
-      ? 'bg-[#FAF9F6] text-[#8E96A3]'
-      : tone === 'amber'
-        ? 'bg-[#FDF9EE] text-[#7D5B0F]'
-        : tone === 'teal'
-          ? 'bg-[#EEF6F8] text-[#11505E]'
-          : 'bg-[#F0F2FA] text-[#283862]';
+  const toneClasses = empty
+    ? 'bg-[#EAE6DC]/75 text-[#8E96A3] select-none'
+    : tone === 'amber'
+      ? 'z-[1] bg-gradient-to-b from-[#FFFDF7] to-[#FDF6E2] text-[#7D5B0F] ring-1 ring-inset ring-[#DFBA51] shadow-[0_3px_10px_rgba(138,101,16,0.12)]'
+      : tone === 'teal'
+        ? 'z-[1] bg-gradient-to-b from-[#FAFEFF] to-[#E6F4F7] text-[#11505E] ring-1 ring-inset ring-[#57A7B8] shadow-[0_3px_10px_rgba(15,94,110,0.12)]'
+        : 'z-[1] bg-gradient-to-b from-[#FAFBFD] to-[#E8ECF9] text-[#283862] ring-1 ring-inset ring-[#7A8CC7] shadow-[0_3px_10px_rgba(43,62,107,0.12)]';
 
-  const labelColor =
-    tone === 'amber'
+  const labelColor = empty
+    ? 'text-[#7A818D] opacity-50'
+    : tone === 'amber'
       ? 'text-[#8A6510]'
       : tone === 'teal'
         ? 'text-[#0F5E6E]'
         : 'text-[#2B3E6B]';
 
   return (
-    <div className={`px-2 sm:px-3 py-2 sm:py-2.5 ${toneClasses}`}>
+    <div className={`relative overflow-hidden px-2 sm:px-3 py-2 sm:py-2.5 ${toneClasses}`}>
       <div
         className={`flex items-start sm:items-center gap-1 text-[10px] sm:text-[10.5px] font-bold tracking-wide leading-tight ${labelColor}`}
       >
@@ -191,18 +194,15 @@ function StorageCell({
         <span className="break-words">{label}</span>
       </div>
       {empty ? (
-        <div className="mt-1">
-          <div className="font-mono tabular-nums text-[14px] sm:text-[15px] font-bold text-[#9CA3AF]">
-            —
-          </div>
-          {!hideHint && (
-            <div className="text-[9.5px] sm:text-[10px] text-[#6B7280] mt-0.5 leading-tight">
-              {emptyCellHint}
-            </div>
-          )}
-        </div>
+        <>
+          <div className="mt-1 min-h-[20px]" aria-hidden="true" />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]"
+          />
+        </>
       ) : (
-        <div className="mt-1 tabular-nums text-[13px] sm:text-[14px] font-bold text-[#182230] leading-snug">
+        <div className="mt-1 tabular-nums text-[13.5px] sm:text-[14.5px] font-extrabold text-[#122A47] leading-snug">
           {value}
         </div>
       )}
@@ -1416,29 +1416,70 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mt-2.5 text-[12px]">
                       {(
                         [
-                          [t.colCold, item.cool],
-                          [t.colFrozen, item.freeze],
-                          [t.colRoom, item.room],
-                          [t.colDisplayCool, item.displayCool || ''],
-                          [t.colDisplayHot, item.displayHot || ''],
+                          [t.colCold, item.cool, 'teal'],
+                          [t.colFrozen, item.freeze, 'indigo'],
+                          [t.colRoom, item.room, 'amber'],
+                          [t.colDisplayCool, item.displayCool || '', 'teal'],
+                          [t.colDisplayHot, item.displayHot || '', 'amber'],
                         ] as const
-                      ).map(([colLabel, rawVal]) => (
-                        <div
-                          key={colLabel}
-                          className="rounded-lg border border-[#EAE5DA] bg-[#FAF9F6] px-2.5 py-1.5"
-                        >
-                          <span className="block text-[10px] font-bold text-[#5C6573] truncate">
-                            {colLabel}
-                          </span>
-                          <span className="tabular-nums font-bold text-[#182230]">
-                            {translateDuration(rawVal, lang)}
-                          </span>
-                        </div>
-                      ))}
+                      ).map(([colLabel, rawVal, tone]) => {
+                        const displayVal = translateDuration(rawVal, lang);
+                        const empty = isEmptyCell(displayVal);
+                        const activeBox =
+                          tone === 'amber'
+                            ? 'bg-gradient-to-b from-[#FFFDF7] to-[#FDF6E2] ring-1 ring-inset ring-[#DFBA51] shadow-[0_2px_6px_rgba(138,101,16,0.12)]'
+                            : tone === 'teal'
+                              ? 'bg-gradient-to-b from-[#FAFEFF] to-[#E6F4F7] ring-1 ring-inset ring-[#57A7B8] shadow-[0_2px_6px_rgba(15,94,110,0.12)]'
+                              : 'bg-gradient-to-b from-[#FAFBFD] to-[#E8ECF9] ring-1 ring-inset ring-[#7A8CC7] shadow-[0_2px_6px_rgba(43,62,107,0.12)]';
+                        const activeLabel =
+                          tone === 'amber'
+                            ? 'text-[#8A6510]'
+                            : tone === 'teal'
+                              ? 'text-[#0F5E6E]'
+                              : 'text-[#2B3E6B]';
+                        return (
+                          <div
+                            key={colLabel}
+                            className={`relative overflow-hidden rounded-lg px-2.5 py-1.5 ${
+                              empty
+                                ? 'border border-[#E4DFD3] bg-[#EAE6DC]/75 select-none'
+                                : activeBox
+                            }`}
+                          >
+                            <span
+                              className={`block text-[10px] font-bold truncate ${
+                                empty ? 'text-[#7A818D] opacity-50' : activeLabel
+                              }`}
+                            >
+                              {colLabel}
+                            </span>
+                            {empty ? (
+                              <>
+                                <span className="block min-h-[18px]" aria-hidden="true" />
+                                <div
+                                  aria-hidden="true"
+                                  className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]"
+                                />
+                              </>
+                            ) : (
+                              <span className="tabular-nums font-extrabold text-[#122A47]">
+                                {displayVal}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
               }
+
+              const roomVal = translateDuration(item.room, lang);
+              const coolVal = translateDuration(item.cool, lang);
+              const freezeVal = translateDuration(item.freeze, lang);
+              const roomEmpty = isEmptyCell(roomVal);
+              const coolEmpty = isEmptyCell(coolVal);
+              const freezeEmpty = isEmptyCell(freezeVal);
 
               return (
                 <div
@@ -1463,15 +1504,42 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                         </span>
                       )}
                     </button>
-                    <span className="tabular-nums text-[13px] font-semibold text-[#182230]">
-                      {translateDuration(item.room, lang)}
-                    </span>
-                    <span className="tabular-nums text-[13px] font-semibold text-[#0F5E6E]">
-                      {translateDuration(item.cool, lang)}
-                    </span>
-                    <span className="tabular-nums text-[13px] font-semibold text-[#2B3E6B]">
-                      {translateDuration(item.freeze, lang)}
-                    </span>
+                    {roomEmpty ? (
+                      <span
+                        aria-hidden="true"
+                        className="relative block h-7 rounded-md border border-[#E4DFD3] bg-[#EAE6DC]/75 overflow-hidden"
+                      >
+                        <span className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]" />
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-gradient-to-b from-[#FFFDF7] to-[#FDF6E2] ring-1 ring-inset ring-[#DFBA51] shadow-[0_2px_6px_rgba(138,101,16,0.10)] tabular-nums text-[13px] font-extrabold text-[#122A47]">
+                        {roomVal}
+                      </span>
+                    )}
+                    {coolEmpty ? (
+                      <span
+                        aria-hidden="true"
+                        className="relative block h-7 rounded-md border border-[#E4DFD3] bg-[#EAE6DC]/75 overflow-hidden"
+                      >
+                        <span className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]" />
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-gradient-to-b from-[#FAFEFF] to-[#E6F4F7] ring-1 ring-inset ring-[#57A7B8] shadow-[0_2px_6px_rgba(15,94,110,0.10)] tabular-nums text-[13px] font-extrabold text-[#0F5E6E]">
+                        {coolVal}
+                      </span>
+                    )}
+                    {freezeEmpty ? (
+                      <span
+                        aria-hidden="true"
+                        className="relative block h-7 rounded-md border border-[#E4DFD3] bg-[#EAE6DC]/75 overflow-hidden"
+                      >
+                        <span className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]" />
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-gradient-to-b from-[#FAFBFD] to-[#E8ECF9] ring-1 ring-inset ring-[#7A8CC7] shadow-[0_2px_6px_rgba(43,62,107,0.10)] tabular-nums text-[13px] font-extrabold text-[#2B3E6B]">
+                        {freezeVal}
+                      </span>
+                    )}
                     <span className="text-[12px] text-[#5C6573] line-clamp-2">
                       {isEmptyCell(item.note)
                         ? t.emptyNote
@@ -1545,29 +1613,89 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 mt-2.5 text-[12px]">
-                      <div className="rounded-lg bg-[#FDF9EE] px-2.5 py-1.5">
-                        <span className="block text-[10px] font-bold text-[#8A6510]">
+                      <div
+                        className={`relative overflow-hidden rounded-lg px-2.5 py-1.5 ${
+                          roomEmpty
+                            ? 'border border-[#E4DFD3] bg-[#EAE6DC]/75 select-none'
+                            : 'bg-gradient-to-b from-[#FFFDF7] to-[#FDF6E2] ring-1 ring-inset ring-[#DFBA51] shadow-[0_2px_6px_rgba(138,101,16,0.12)]'
+                        }`}
+                      >
+                        <span
+                          className={`block text-[10px] font-bold ${
+                            roomEmpty ? 'text-[#7A818D] opacity-50' : 'text-[#8A6510]'
+                          }`}
+                        >
                           {t.colRoom}
                         </span>
-                        <span className="tabular-nums font-bold text-[#182230]">
-                          {translateDuration(item.room, lang)}
-                        </span>
+                        {roomEmpty ? (
+                          <>
+                            <span className="block min-h-[18px]" aria-hidden="true" />
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]"
+                            />
+                          </>
+                        ) : (
+                          <span className="tabular-nums font-extrabold text-[#122A47]">
+                            {roomVal}
+                          </span>
+                        )}
                       </div>
-                      <div className="rounded-lg bg-[#EEF6F8] px-2.5 py-1.5">
-                        <span className="block text-[10px] font-bold text-[#0F5E6E]">
+                      <div
+                        className={`relative overflow-hidden rounded-lg px-2.5 py-1.5 ${
+                          coolEmpty
+                            ? 'border border-[#E4DFD3] bg-[#EAE6DC]/75 select-none'
+                            : 'bg-gradient-to-b from-[#FAFEFF] to-[#E6F4F7] ring-1 ring-inset ring-[#57A7B8] shadow-[0_2px_6px_rgba(15,94,110,0.12)]'
+                        }`}
+                      >
+                        <span
+                          className={`block text-[10px] font-bold ${
+                            coolEmpty ? 'text-[#7A818D] opacity-50' : 'text-[#0F5E6E]'
+                          }`}
+                        >
                           {t.colCool}
                         </span>
-                        <span className="tabular-nums font-bold text-[#182230]">
-                          {translateDuration(item.cool, lang)}
-                        </span>
+                        {coolEmpty ? (
+                          <>
+                            <span className="block min-h-[18px]" aria-hidden="true" />
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]"
+                            />
+                          </>
+                        ) : (
+                          <span className="tabular-nums font-extrabold text-[#122A47]">
+                            {coolVal}
+                          </span>
+                        )}
                       </div>
-                      <div className="rounded-lg bg-[#F0F2FA] px-2.5 py-1.5">
-                        <span className="block text-[10px] font-bold text-[#2B3E6B]">
+                      <div
+                        className={`relative overflow-hidden rounded-lg px-2.5 py-1.5 ${
+                          freezeEmpty
+                            ? 'border border-[#E4DFD3] bg-[#EAE6DC]/75 select-none'
+                            : 'bg-gradient-to-b from-[#FAFBFD] to-[#E8ECF9] ring-1 ring-inset ring-[#7A8CC7] shadow-[0_2px_6px_rgba(43,62,107,0.12)]'
+                        }`}
+                      >
+                        <span
+                          className={`block text-[10px] font-bold ${
+                            freezeEmpty ? 'text-[#7A818D] opacity-50' : 'text-[#2B3E6B]'
+                          }`}
+                        >
                           {t.colFreeze}
                         </span>
-                        <span className="tabular-nums font-bold text-[#182230]">
-                          {translateDuration(item.freeze, lang)}
-                        </span>
+                        {freezeEmpty ? (
+                          <>
+                            <span className="block min-h-[18px]" aria-hidden="true" />
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/35 via-[#E4DFD3]/55 to-[#D9D3C4]/65 backdrop-blur-[1.5px]"
+                            />
+                          </>
+                        ) : (
+                          <span className="tabular-nums font-extrabold text-[#122A47]">
+                            {freezeVal}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1589,7 +1717,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
       {/* Quiet Footer */}
       <footer className="border-t border-[#C9A227]/70 bg-[#122A47]">
         <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 text-[12.5px] font-semibold text-[#E2C665]">
-          <span>{t.subtitle}</span>
+          <span>{ex.footerInternal}</span>
           <span className="font-bold">By Le Hoang Phuc</span>
         </div>
       </footer>
