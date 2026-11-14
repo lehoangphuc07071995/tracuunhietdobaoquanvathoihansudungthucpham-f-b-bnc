@@ -6,33 +6,12 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { FOOD_ITEMS, getItemCode } from './src/data/foodData.ts';
-import { runSmartSearch } from './src/utils/smartSearch.ts';
-import type { FoodItem, Lang } from './src/types.ts';
+import type { Lang } from './src/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-type CanonicalFoodItem = FoodItem & { code: string };
-
-const CANONICAL_ITEMS: CanonicalFoodItem[] = FOOD_ITEMS.map((item) => ({
-  ...item,
-  code: getItemCode(item),
-}));
-
-const VALID_ITEM_CODES = new Set(CANONICAL_ITEMS.map((item) => item.code));
-const ITEMS_BY_CODE = new Map<string, CanonicalFoodItem>(
-  CANONICAL_ITEMS.map((item) => [item.code.toUpperCase(), item])
-);
-
-const SCAN_DATABASE_JSON = JSON.stringify(
-  CANONICAL_ITEMS.map((item) => ({
-    code: item.code,
-    group: item.g,
-    name: item.name,
-    ...(item.enName ? { enName: item.enName } : {}),
-    ...(item.note && item.note !== '—' ? { note: item.note } : {}),
-  }))
-);
+const VALID_ITEM_CODES = new Set(FOOD_ITEMS.map((item) => getItemCode(item)));
 
 const COMPACT_CATALOG = FOOD_ITEMS.map((item) => {
   const code = getItemCode(item);
@@ -93,18 +72,9 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
-const ALLOWED_IMAGE_MIMES = new Set([
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-]);
-
 async function createApp() {
   const app = express();
-  app.use(express.json({ limit: '8mb' }));
+  app.use(express.json({ limit: '128kb' }));
 
   app.post('/api/ai-search', async (req, res) => {
     try {
@@ -218,189 +188,6 @@ ${COMPACT_CATALOG}`;
         error: 'AI_REQUEST_FAILED',
         matchedCodes: [],
         reason: '',
-      });
-    }
-  });
-
-  app.post('/api/ai-vision-scan', async (req, res) => {
-    try {
-      const rawImage =
-        typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64.trim() : '';
-      const rawMime =
-        typeof req.body?.mimeType === 'string'
-          ? req.body.mimeType.trim().toLowerCase()
-          : 'image/jpeg';
-      const rawLang = typeof req.body?.lang === 'string' ? req.body.lang : 'VI';
-      const lang: Lang =
-        rawLang === 'EN' || rawLang === 'KO' || rawLang === 'HI' ? rawLang : 'VI';
-
-      if (!rawImage) {
-        res.status(400).json({ error: 'MISSING_IMAGE', recognized_item: '', matched_data: null });
-        return;
-      }
-
-      const cleanBase64 = rawImage.replace(/^data:[^;]+;base64,/, '');
-      const mimeType = ALLOWED_IMAGE_MIMES.has(rawMime)
-        ? rawMime === 'image/jpg'
-          ? 'image/jpeg'
-          : rawMime
-        : 'image/jpeg';
-
-      const ai = getGeminiClient();
-      if (!ai) {
-        res.status(503).json({
-          error: 'AI_UNAVAILABLE',
-          recognized_item: '',
-          matched_data: null,
-        });
-        return;
-      }
-
-      const promptText = `Bạn là chuyên gia QA/QC hệ thống F&B. Hãy nhìn bức ảnh nhãn mác/nguyên liệu này, đọc kỹ toàn bộ văn bản trên bao bì/tem nhãn (tiếng Việt, tiếng Anh, tiếng Hàn, tiếng Pháp, thương hiệu, thành phần, quy cách) và nhận diện hình ảnh thực phẩm/nguyên liệu để xác định chính xác tên loại thực phẩm.
-
-Sau đó, dò tìm tên thực phẩm vừa nhận diện được bên trong danh sách dữ liệu cơ sở (Database) sau đây của ứng dụng:
-${SCAN_DATABASE_JSON}
-
-QUY TẮC ÁNH XẠ CHÍNH XÁC:
-- Quy đổi chính xác tên thương mại, tiếng Anh hoặc thành phần chính sang đúng mặt hàng trong Database (ví dụ: Whipping Cream -> Kem sữa béo/Kem tươi; Mozzarella/Cheddar/Mascarpone -> Phô mai; Salmon -> Cá hồi; Croissant -> Bánh sừng bò; Soy sauce -> Nước tương; Mayonnaise -> Xốt Mayonnaise; Coffee beans -> Cà phê).
-- Nếu ảnh quá mờ không đọc được, hoặc chắc chắn KHÔNG phải thực phẩm/nguyên liệu F&B có trong hệ thống tiêu chuẩn thì đặt is_food_or_beverage = false và matched_code = null.
-- Trả về đúng JSON với:
-  + "recognized_item": tên sản phẩm/nhãn mác đọc được rõ ràng bằng ${LANG_LABEL[lang]}.
-  + "ocr_keywords": các từ khóa văn bản quan trọng đọc được từ nhãn mác/bao bì (tiếng Việt + tiếng Anh) để đối chiếu ngược vào Database.
-  + "is_food_or_beverage": true nếu ảnh là thực phẩm/nguyên liệu/đồ uống/bao bì F&B hợp lệ, ngược lại false.
-  + "matched_code": mã code khớp nhất trong Database (ví dụ "PL1-05") hoặc null nếu không khớp.
-  + "related_codes": danh sách tối đa 5 mã code liên quan sát nghĩa nhất trong Database.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                mimeType,
-                data: cleanBase64,
-              },
-            },
-            {
-              text: promptText,
-            },
-          ],
-        },
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              recognized_item: {
-                type: Type.STRING,
-                description: 'Recognized food item name or packaging label text.',
-              },
-              ocr_keywords: {
-                type: Type.STRING,
-                description: 'Key OCR words read from the label for reverse catalog lookup.',
-              },
-              is_food_or_beverage: {
-                type: Type.BOOLEAN,
-                description: 'True if image shows identifiable food, ingredient, or F&B packaging.',
-              },
-              matched_code: {
-                type: Type.STRING,
-                nullable: true,
-                description: 'Best matching official catalog code (e.g. PL1-05) or null.',
-              },
-              related_codes: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'Closely related official catalog codes.',
-              },
-            },
-            required: ['recognized_item', 'is_food_or_beverage'],
-          },
-        },
-      });
-
-      const rawText = (response.text ?? '{}').trim();
-      let parsed: {
-        recognized_item?: unknown;
-        ocr_keywords?: unknown;
-        is_food_or_beverage?: unknown;
-        matched_code?: unknown;
-        related_codes?: unknown;
-      } = {};
-      try {
-        parsed = JSON.parse(rawText);
-      } catch {
-        parsed = {};
-      }
-
-      const recognizedItem =
-        typeof parsed.recognized_item === 'string'
-          ? parsed.recognized_item.trim()
-          : '';
-      const ocrKeywords =
-        typeof parsed.ocr_keywords === 'string' ? parsed.ocr_keywords.trim() : '';
-      const isFood = parsed.is_food_or_beverage !== false;
-
-      let canonicalMatch: CanonicalFoodItem | null = null;
-      if (isFood && typeof parsed.matched_code === 'string') {
-        canonicalMatch = ITEMS_BY_CODE.get(parsed.matched_code.trim().toUpperCase()) ?? null;
-      }
-
-      const relatedCodes: string[] = [];
-      const seenCodes = new Set<string>();
-      if (canonicalMatch) {
-        relatedCodes.push(canonicalMatch.code);
-        seenCodes.add(canonicalMatch.code);
-      }
-      if (isFood && Array.isArray(parsed.related_codes)) {
-        for (const c of parsed.related_codes) {
-          if (typeof c !== 'string') continue;
-          const up = c.trim().toUpperCase();
-          if (VALID_ITEM_CODES.has(up) && !seenCodes.has(up)) {
-            seenCodes.add(up);
-            relatedCodes.push(up);
-          }
-        }
-      }
-
-      if (isFood && !canonicalMatch && relatedCodes.length > 0) {
-        canonicalMatch = ITEMS_BY_CODE.get(relatedCodes[0]) ?? null;
-      }
-
-      // Reverse lookup fallback via runSmartSearch if Gemini extracted clear F&B label text
-      if (isFood && !canonicalMatch && (recognizedItem || ocrKeywords)) {
-        const lookupTerms = [recognizedItem, ocrKeywords].filter(Boolean).join(' ');
-        const reverseMatches = runSmartSearch({
-          items: FOOD_ITEMS,
-          query: lookupTerms,
-          lang,
-        });
-        if (reverseMatches.length > 0) {
-          const topCode = getItemCode(reverseMatches[0]);
-          canonicalMatch = ITEMS_BY_CODE.get(topCode.toUpperCase()) ?? null;
-          for (const rm of reverseMatches.slice(0, 5)) {
-            const c = getItemCode(rm).toUpperCase();
-            if (!seenCodes.has(c)) {
-              seenCodes.add(c);
-              relatedCodes.push(c);
-            }
-          }
-        }
-      }
-
-      res.json({
-        recognized_item: recognizedItem,
-        matched_data: canonicalMatch,
-        related_codes: relatedCodes.slice(0, 8),
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[api/ai-vision-scan] error:', msg);
-      res.status(502).json({
-        error: 'VISION_SCAN_FAILED',
-        recognized_item: '',
-        matched_data: null,
       });
     }
   });

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -38,7 +37,6 @@ import {
   translateItemNote,
 } from './data/translations';
 import { runSmartSearch } from './utils/smartSearch';
-import { prepareImageForVisionScan } from './utils/imageScan';
 import type {
   AppendixFilter,
   FoodItem,
@@ -65,14 +63,6 @@ interface ExtraLabels {
   mobileTitleLine2: string;
   mobileSearchPlaceholder: string;
   footerInternal: string;
-  scanBtn: string;
-  scanBtnShort: string;
-  scanBtnTitle: string;
-  scanLoadingText: string;
-  scanBannerTitle: string;
-  scanRecognizedPrefix: string;
-  scanErrorAlert: string;
-  scanDismiss: string;
 }
 
 const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
@@ -94,15 +84,6 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'NHIỆT ĐỘ BẢO QUẢN & THỜI HẠN SỬ DỤNG THỰC PHẨM',
     mobileSearchPlaceholder: 'Tìm món, mã PL1-01, bảo quản...',
     footerInternal: 'HỆ THỐNG LƯU HÀNH NỘI BỘ',
-    scanBtn: 'Quét Nhãn mác',
-    scanBtnShort: 'Quét',
-    scanBtnTitle: 'Chụp ảnh hoặc tải ảnh bao bì/nguyên liệu để AI nhận diện',
-    scanLoadingText: 'Đang phân tích dữ liệu...',
-    scanBannerTitle: 'Kết quả quét nhãn mác AI',
-    scanRecognizedPrefix: 'Nhận diện từ ảnh:',
-    scanErrorAlert:
-      'Không nhận diện được nhãn mác hoặc sản phẩm chưa có trong hệ thống tiêu chuẩn. Vui lòng lau sạch camera và chụp lại rõ nét hơn.',
-    scanDismiss: 'Đóng',
   },
   EN: {
     aiTag: 'AI Smart Search',
@@ -122,15 +103,6 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'FOOD STORAGE TEMPERATURE & SHELF LIFE',
     mobileSearchPlaceholder: 'Search item, PL1-01, storage...',
     footerInternal: 'INTERNAL CIRCULATION SYSTEM',
-    scanBtn: 'Scan Label',
-    scanBtnShort: 'Scan',
-    scanBtnTitle: 'Take or upload a photo of food packaging/ingredient for AI recognition',
-    scanLoadingText: 'Analyzing image data...',
-    scanBannerTitle: 'AI Label Scan Result',
-    scanRecognizedPrefix: 'Recognized from photo:',
-    scanErrorAlert:
-      'Unable to recognize the label or product is not in the standard system. Please wipe the camera lens clean and take a clearer photo.',
-    scanDismiss: 'Dismiss',
   },
   KO: {
     aiTag: 'AI 스마트 검색',
@@ -150,15 +122,6 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: '식품 보관 온도 및 유통기한 기준표',
     mobileSearchPlaceholder: '품목, PL1-01, 보관 기준 검색...',
     footerInternal: '사내 전용 배포 시스템',
-    scanBtn: '라벨 스캔',
-    scanBtnShort: '스캔',
-    scanBtnTitle: '포장 라벨 또는 식재료 사진을 찍어 AI로 자동 조회',
-    scanLoadingText: '데이터 분석 중...',
-    scanBannerTitle: 'AI 라벨 스캔 결과',
-    scanRecognizedPrefix: '이미지 인식 결과:',
-    scanErrorAlert:
-      '라벨을 인식할 수 없거나 표준 시스템에 등록되지 않은 제품입니다. 카메라 렌즈를 닦고 더 선명하게 다시 촬영해 주세요.',
-    scanDismiss: '닫기',
   },
   HI: {
     aiTag: 'AI स्मार्ट खोज',
@@ -178,15 +141,6 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'खाद्य भंडारण तापमान और शेल्फ लाइफ मानक',
     mobileSearchPlaceholder: 'आइटम, PL1-01, भंडारण खोजें...',
     footerInternal: 'आंतरिक परिचालन प्रणाली',
-    scanBtn: 'लेबल स्कैन',
-    scanBtnShort: 'स्कैन',
-    scanBtnTitle: 'AI पहचान के लिए पैकेजिंग लेबल या सामग्री की फ़ोटो लें/चुनें',
-    scanLoadingText: 'डेटा का विश्लेषण...',
-    scanBannerTitle: 'AI लेबल स्कैन परिणाम',
-    scanRecognizedPrefix: 'फ़ोटो से पहचाना गया:',
-    scanErrorAlert:
-      'लेबल पहचाना नहीं जा सका या उत्पाद मानक प्रणाली में नहीं है। कृपया कैमरा लेंस साफ करें और अधिक स्पष्ट फ़ोटो लें।',
-    scanDismiss: 'बंद करें',
   },
 };
 
@@ -286,26 +240,17 @@ export default function App() {
     return () => mq.removeEventListener('change', sync);
   }, []);
 
-  // AI Semantic Search & Label Scanner state
+  // AI Semantic Search state
   const [aiMatchedCodes, setAiMatchedCodes] = useState<string[]>([]);
   const [aiReason, setAiReason] = useState<string>('');
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiLastQuery, setAiLastQuery] = useState<string>('');
-  const [scanLoading, setScanLoading] = useState<boolean>(false);
-  const [scanError, setScanError] = useState<string>('');
-  const [scanResult, setScanResult] = useState<{
-    recognizedItem: string;
-    matchedCode: string;
-    previewDataUrl: string;
-  } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const scanInputRef = useRef<HTMLInputElement | null>(null);
   const groupDropdownRef = useRef<HTMLDivElement | null>(null);
   const langDropdownRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
-  const scanAbortRef = useRef<AbortController | null>(null);
   const aiLastKeyRef = useRef<string>('');
   const aiEndpointAvailableRef = useRef<boolean>(
     typeof window !== 'undefined' ? window.location.protocol !== 'file:' : true
@@ -415,7 +360,6 @@ export default function App() {
         window.clearTimeout(toastTimerRef.current);
       }
       aiAbortRef.current?.abort();
-      scanAbortRef.current?.abort();
     };
   }, []);
 
@@ -539,104 +483,8 @@ export default function App() {
     setQuickHygiene((prev) => (prev === mode ? 'none' : mode));
   };
 
-  const handleScanImageChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    scanAbortRef.current?.abort();
-    aiAbortRef.current?.abort();
-    const controller = new AbortController();
-    scanAbortRef.current = controller;
-
-    setScanLoading(true);
-    setScanError('');
-
-    try {
-      const prepared = await prepareImageForVisionScan(file);
-      if (controller.signal.aborted) return;
-
-      const response = await fetch('/api/ai-vision-scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: prepared.base64,
-          mimeType: prepared.mimeType,
-          lang,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`VISION_HTTP_${response.status}`);
-      }
-
-      const data = (await response.json()) as {
-        recognized_item?: string;
-        matched_data?: (FoodItem & { code?: string }) | null;
-        related_codes?: string[];
-      };
-
-      if (controller.signal.aborted) return;
-
-      const matchedRaw = data?.matched_data;
-      const canonicalItem = matchedRaw
-        ? FOOD_ITEMS.find((item) => {
-            const code = getItemCode(item);
-            if (matchedRaw.code && code === matchedRaw.code.toUpperCase()) {
-              return true;
-            }
-            return item.a === matchedRaw.a && item.n === matchedRaw.n;
-          }) ?? null
-        : null;
-
-      if (!canonicalItem) {
-        setScanResult(null);
-        setScanError(ex.scanErrorAlert);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
-
-      const matchedCode = getItemCode(canonicalItem);
-      const matchedName = translateItemName(canonicalItem, lang);
-      const relatedCodes = Array.isArray(data.related_codes)
-        ? data.related_codes
-        : [];
-      const nextCodes = Array.from(new Set([matchedCode, ...relatedCodes]));
-
-      aiLastKeyRef.current = `${lang}::${matchedName.toLowerCase()}`;
-      setAppendix('ALL');
-      setGroup('ALL');
-      setStorageFilter('all');
-      setQuickHygiene('none');
-      setAiMatchedCodes(nextCodes);
-      setAiReason('');
-      setAiLastQuery(matchedName);
-      setQuery(matchedName);
-      setScanResult({
-        recognizedItem: (data.recognized_item || '').trim() || matchedName,
-        matchedCode,
-        previewDataUrl: prepared.previewDataUrl,
-      });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } catch (err: unknown) {
-      if ((err as { name?: string })?.name !== 'AbortError') {
-        setScanResult(null);
-        setScanError(ex.scanErrorAlert);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    } finally {
-      if (!controller.signal.aborted) {
-        setScanLoading(false);
-      }
-    }
-  };
-
   const resetFilters = () => {
     aiAbortRef.current?.abort();
-    scanAbortRef.current?.abort();
     setQuery('');
     setAppendix('ALL');
     setGroup('ALL');
@@ -645,8 +493,6 @@ export default function App() {
     setAiMatchedCodes([]);
     setAiReason('');
     setAiLastQuery('');
-    setScanError('');
-    setScanResult(null);
     aiLastKeyRef.current = '';
   };
 
@@ -779,17 +625,17 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                 referrerPolicy="no-referrer"
                 className="h-9 w-9 sm:h-10 sm:w-10 shrink-0 rounded-lg border border-white/25 object-cover shadow-sm"
               />
-              <div className="min-w-0">
-                <p className="sm:hidden text-[14.5px] font-extrabold tracking-tight leading-none text-white whitespace-nowrap">
+              <div className="min-w-0 flex-1">
+                <p className="sm:hidden text-[14.5px] font-extrabold tracking-tight leading-[1.3] text-white whitespace-nowrap">
                   {ex.mobileTitleLine1}
                 </p>
-                <p className="sm:hidden text-[9.5px] font-semibold tracking-wider text-white/75 mt-1 leading-none truncate">
+                <p className="sm:hidden text-[clamp(8.4px,2.25vw,10.5px)] font-semibold tracking-[0.015em] text-white/85 mt-0.5 leading-[1.55] pt-[1px] truncate">
                   {t.subtitle}
                 </p>
                 <h1 className="hidden sm:block text-[17px] lg:text-[19px] font-extrabold tracking-tight leading-snug text-white text-balance">
                   {t.title}
                 </h1>
-                <p className="hidden sm:block text-[11px] font-semibold tracking-wider text-[#E2C665] mt-0.5 truncate">
+                <p className="hidden sm:block text-[11px] font-semibold tracking-wider text-[#E2C665] mt-0.5 leading-normal truncate">
                   {t.subtitle}
                 </p>
               </div>
@@ -892,125 +738,76 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
       {/* Compact Sticky Search Dock */}
       <div className="sticky top-[var(--safe-area-inset-top)] z-40 bg-[#122A47]/95 backdrop-blur-md border-b border-[#C9A227]/70 shadow-[0_8px_24px_rgba(18,42,71,0.16)]">
         <div className="mx-auto max-w-[1360px] px-3.5 sm:px-6 py-2 sm:py-3">
-          <div className="flex items-center gap-2">
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void triggerAiSearch(query, lang);
-              }}
-              className="relative flex-1 min-w-0 flex items-center"
-            >
-              <Search
-                className="pointer-events-none absolute left-3 sm:left-3.5 text-[#1E4A75]"
-                size={17}
-              />
-              <input
-                ref={searchInputRef}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={
-                  isMobileViewport
-                    ? ex.mobileSearchPlaceholder
-                    : lang === 'VI'
-                      ? 'Tìm tên món, mã PL1-01, thành phần, hoặc hỏi điều kiện bảo quản...'
-                      : `${t.searchPlaceholder} food, code, ingredient, or storage rule...`
-                }
-                aria-label={t.searchPlaceholder}
-                className={`w-full h-[42px] sm:h-[50px] bg-white border border-[#D8D2C2] focus:border-[#C9A227] rounded-xl pl-9 sm:pl-10 ${
-                  query ? 'pr-[104px] sm:pr-44' : 'pr-[72px] sm:pr-40'
-                } text-[13.5px] sm:text-[15px] font-medium text-[#182230] placeholder:text-[#7A8291] shadow-sm transition-colors`}
-              />
-
-              <div className="absolute right-1.5 flex items-center gap-1">
-                {query && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      aiAbortRef.current?.abort();
-                      setQuery('');
-                      setAiMatchedCodes([]);
-                      setAiReason('');
-                      setAiLastQuery('');
-                      setScanResult(null);
-                      setScanError('');
-                      aiLastKeyRef.current = '';
-                      searchInputRef.current?.focus();
-                    }}
-                    aria-label={t.clearSearch}
-                    className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg text-[#6B7280] hover:text-[#182230] hover:bg-[#F2EFE8] flex items-center justify-center transition-colors"
-                  >
-                    <X size={16} />
-                  </button>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={!query.trim() || aiLoading}
-                  title={ex.aiButtonTitle}
-                  className={`h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg text-[11.5px] sm:text-[12px] font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-                    query.trim()
-                      ? 'bg-[#1E4A75] text-white hover:bg-[#122A47]'
-                      : 'bg-[#F2EFE8] text-[#8A92A0] cursor-not-allowed'
-                  }`}
-                >
-                  {aiLoading ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Sparkles size={14} />
-                  )}
-                  <span className="hidden sm:inline">
-                    {aiLoading ? ex.aiSearching : ex.aiTag}
-                  </span>
-                  <span className="sm:hidden">AI</span>
-                </button>
-              </div>
-            </form>
-
-            {/* Camera / Packaging Label Scanner Button */}
-            <input
-              ref={scanInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              style={{ display: 'none' }}
-              onChange={handleScanImageChange}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void triggerAiSearch(query, lang);
+            }}
+            className="relative flex items-center"
+          >
+            <Search
+              className="pointer-events-none absolute left-3 sm:left-3.5 text-[#1E4A75]"
+              size={17}
             />
-            <button
-              type="button"
-              disabled={scanLoading}
-              onClick={() => scanInputRef.current?.click()}
-              title={ex.scanBtnTitle}
-              aria-label={ex.scanBtn}
-              className={`h-[42px] sm:h-[50px] px-3 sm:px-4 rounded-xl border font-bold text-[12.5px] sm:text-[13.5px] flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 shadow-sm transition-colors ${
-                scanLoading
-                  ? 'bg-[#C9A227]/90 text-[#122A47] border-[#E2C665] cursor-wait'
-                  : 'bg-[#C9A227] hover:bg-[#DFBA51] text-[#122A47] border-[#E2C665]'
-              }`}
-            >
-              {scanLoading ? (
-                <Loader2 size={17} className="animate-spin shrink-0" />
-              ) : (
-                <Camera size={17} className="shrink-0" />
-              )}
-              <span className="hidden sm:inline">
-                {scanLoading ? ex.scanLoadingText : ex.scanBtn}
-              </span>
-              <span className="sm:hidden">
-                {scanLoading ? '...' : ex.scanBtnShort}
-              </span>
-            </button>
-          </div>
+            <input
+              ref={searchInputRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={
+                isMobileViewport
+                  ? ex.mobileSearchPlaceholder
+                  : lang === 'VI'
+                    ? 'Tìm tên món, mã PL1-01, thành phần, hoặc hỏi điều kiện bảo quản...'
+                    : `${t.searchPlaceholder} food, code, ingredient, or storage rule...`
+              }
+              aria-label={t.searchPlaceholder}
+              className={`w-full h-[42px] sm:h-[50px] bg-white border border-[#D8D2C2] focus:border-[#C9A227] rounded-xl pl-9 sm:pl-10 ${
+                query ? 'pr-[104px] sm:pr-44' : 'pr-[72px] sm:pr-40'
+              } text-[13.5px] sm:text-[15px] font-medium text-[#182230] placeholder:text-[#7A8291] shadow-sm transition-colors`}
+            />
 
-          {scanLoading && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="mt-2 flex items-center gap-2 rounded-lg border border-[#E2C665]/40 bg-[#1B3A5E] px-3 py-1.5 text-[12px] sm:text-[12.5px] font-semibold text-[#F3DA7B]"
-            >
-              <Loader2 size={14} className="animate-spin shrink-0" />
-              <span>{ex.scanLoadingText}</span>
+            <div className="absolute right-1.5 flex items-center gap-1">
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    aiAbortRef.current?.abort();
+                    setQuery('');
+                    setAiMatchedCodes([]);
+                    setAiReason('');
+                    setAiLastQuery('');
+                    aiLastKeyRef.current = '';
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label={t.clearSearch}
+                  className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg text-[#6B7280] hover:text-[#182230] hover:bg-[#F2EFE8] flex items-center justify-center transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={!query.trim() || aiLoading}
+                title={ex.aiButtonTitle}
+                className={`h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg text-[11.5px] sm:text-[12px] font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+                  query.trim()
+                    ? 'bg-[#1E4A75] text-white hover:bg-[#122A47]'
+                    : 'bg-[#F2EFE8] text-[#8A92A0] cursor-not-allowed'
+                }`}
+              >
+                {aiLoading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                <span className="hidden sm:inline">
+                  {aiLoading ? ex.aiSearching : ex.aiTag}
+                </span>
+                <span className="sm:hidden">AI</span>
+              </button>
             </div>
-          )}
+          </form>
         </div>
       </div>
 
@@ -1249,73 +1046,6 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
             </div>
           </div>
         </div>
-
-        {/* Vision Label Scan Unmatched Alert */}
-        {scanError && (
-          <div
-            role="alert"
-            className="fade-in mt-4 rounded-xl border border-[#E5A9A9] bg-[#FDF2F2] px-4 py-3 flex items-start justify-between gap-3"
-          >
-            <div className="flex items-start gap-2.5 min-w-0">
-              <TriangleAlert
-                size={18}
-                className="text-[#B42318] shrink-0 mt-0.5"
-              />
-              <p className="text-[13px] sm:text-[13.5px] font-semibold text-[#7A271A] leading-snug">
-                {scanError}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setScanError('')}
-              aria-label={ex.scanDismiss}
-              className="h-7 w-7 rounded-lg text-[#B42318] hover:bg-[#FEE4E2] flex items-center justify-center shrink-0 transition-colors"
-            >
-              <X size={15} />
-            </button>
-          </div>
-        )}
-
-        {/* Vision Label Scan Matched Banner */}
-        {scanResult && (
-          <div className="fade-in mt-4 rounded-xl border border-[#DFBA51] bg-[#FDF8EB] px-4 py-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              {scanResult.previewDataUrl && (
-                <img
-                  src={scanResult.previewDataUrl}
-                  alt={scanResult.recognizedItem}
-                  className="h-11 w-11 rounded-lg border border-[#E2DDD0] object-cover shrink-0 bg-white"
-                />
-              )}
-              <div className="min-w-0">
-                <p className="text-[12.5px] sm:text-[13px] font-bold text-[#122A47] leading-snug flex flex-wrap items-center gap-1.5">
-                  <Camera size={14} className="text-[#8A6510] shrink-0" />
-                  <span>{ex.scanBannerTitle}</span>
-                  <span className="font-mono tabular-nums text-[#8A6510]">
-                    · {scanResult.matchedCode}
-                  </span>
-                </p>
-                <p className="text-[12.5px] sm:text-[13px] text-[#2B3647] mt-0.5 leading-snug truncate">
-                  {ex.scanRecognizedPrefix}{' '}
-                  <span className="font-bold text-[#122A47]">
-                    {scanResult.recognizedItem}
-                  </span>
-                </p>
-                <p className="text-[11px] font-medium text-[#5C6573] mt-0.5">
-                  {ex.aiLegalNotice}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setScanResult(null)}
-              aria-label={ex.scanDismiss}
-              className="text-[12px] font-semibold text-[#8A6510] hover:underline whitespace-nowrap shrink-0 py-1"
-            >
-              {ex.scanDismiss}
-            </button>
-          </div>
-        )}
 
         {/* AI Semantic Explanation Banner (only when AI matches a query) */}
         {query.trim() && (aiReason || aiMatchedCodes.length > 0) && (
@@ -1988,7 +1718,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
       <footer className="border-t border-[#C9A227]/70 bg-[#122A47]">
         <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 text-[12.5px] font-semibold text-[#E2C665]">
           <span>{ex.footerInternal}</span>
-          <span className="font-bold">By Le Hoang Phuc</span>
+          <span className="font-normal">by Le Hoang Phuc</span>
         </div>
       </footer>
 
