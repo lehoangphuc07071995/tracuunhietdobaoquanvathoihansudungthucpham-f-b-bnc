@@ -7,12 +7,15 @@ import {
   Copy,
   Flame,
   Globe,
+  History,
   House,
   LayoutGrid,
   List,
   Loader2,
+  Megaphone,
   PackageSearch,
   Search,
+  ShieldCheck,
   Snowflake,
   Sparkles,
   Thermometer,
@@ -36,12 +39,36 @@ import {
   translateItemName,
   translateItemNote,
 } from './data/translations';
+import {
+  DEFAULT_SYSTEM_CONFIG,
+  db,
+  loadAllItemsFromDb,
+  loadSystemConfig,
+  recordItemViewBehavior,
+  recordSearchBehavior,
+} from './db/dexieDb';
+import {
+  applyImportedItemsToDb,
+  getCloudSyncStatus,
+  loadCloudConfig,
+  pullCatalogFromCloud,
+  syncCatalogToCloud,
+} from './services/storageService';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { runSmartSearch } from './utils/smartSearch';
+import { AdminPanel } from './components/AdminPanel';
+import { AIChatbox } from './components/AIChatbox';
+import { MyHistoryPanel } from './components/MyHistoryPanel';
+import {
+  OfflineStatusBadge,
+  PWAInstallButton,
+} from './components/PWAInstallButton';
 import type {
   AppendixFilter,
   FoodItem,
   Lang,
   StorageFilter,
+  SystemConfig,
   ViewMode,
 } from './types';
 
@@ -63,6 +90,14 @@ interface ExtraLabels {
   mobileTitleLine2: string;
   mobileSearchPlaceholder: string;
   footerInternal: string;
+  historyBtn: string;
+  historyTitle: string;
+  adminBtn: string;
+  adminTitle: string;
+  stdTempLabel: string;
+  hsdUnopenedLabel: string;
+  hsdOpenedLabel: string;
+  packSpecLabel: string;
 }
 
 const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
@@ -84,6 +119,14 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'NHIỆT ĐỘ BẢO QUẢN & THỜI HẠN SỬ DỤNG THỰC PHẨM',
     mobileSearchPlaceholder: 'Tìm món, mã PL1-01, bảo quản...',
     footerInternal: 'HỆ THỐNG LƯU HÀNH NỘI BỘ',
+    historyBtn: 'Lịch sử',
+    historyTitle: 'Lịch sử tra cứu của tôi',
+    adminBtn: 'Admin',
+    adminTitle: 'Quản trị hệ thống (Admin)',
+    stdTempLabel: 'Nhiệt độ bảo quản chuẩn:',
+    hsdUnopenedLabel: 'HSD chưa mở bao bì:',
+    hsdOpenedLabel: 'HSD sau mở bao bì:',
+    packSpecLabel: 'Quy cách bảo quản:',
   },
   EN: {
     aiTag: 'AI Smart Search',
@@ -103,6 +146,14 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'FOOD STORAGE TEMPERATURE & SHELF LIFE',
     mobileSearchPlaceholder: 'Search item, PL1-01, storage...',
     footerInternal: 'INTERNAL CIRCULATION SYSTEM',
+    historyBtn: 'History',
+    historyTitle: 'My Lookup History',
+    adminBtn: 'Admin',
+    adminTitle: 'System Administration (Admin)',
+    stdTempLabel: 'Standard storage temperature:',
+    hsdUnopenedLabel: 'Unopened shelf life:',
+    hsdOpenedLabel: 'Opened shelf life:',
+    packSpecLabel: 'Packaging & storage spec:',
   },
   KO: {
     aiTag: 'AI 스마트 검색',
@@ -122,6 +173,14 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: '식품 보관 온도 및 유통기한 기준표',
     mobileSearchPlaceholder: '품목, PL1-01, 보관 기준 검색...',
     footerInternal: '사내 전용 배포 시스템',
+    historyBtn: '기록',
+    historyTitle: '내 조회 기록',
+    adminBtn: '관리자',
+    adminTitle: '시스템 관리 (Admin)',
+    stdTempLabel: '표준 보관 온도:',
+    hsdUnopenedLabel: '미개봉 유통기한:',
+    hsdOpenedLabel: '개봉 후 소비기한:',
+    packSpecLabel: '포장 및 보관 규격:',
   },
   HI: {
     aiTag: 'AI स्मार्ट खोज',
@@ -141,6 +200,14 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'खाद्य भंडारण तापमान और शेल्फ लाइफ मानक',
     mobileSearchPlaceholder: 'आइटम, PL1-01, भंडारण खोजें...',
     footerInternal: 'आंतरिक परिचालन प्रणाली',
+    historyBtn: 'इतिहास',
+    historyTitle: 'मेरा खोज इतिहास',
+    adminBtn: 'एडमिन',
+    adminTitle: 'सिस्टम प्रशासन (Admin)',
+    stdTempLabel: 'मानक भंडारण तापमान:',
+    hsdUnopenedLabel: 'बिना खुले शेल्फ लाइफ:',
+    hsdOpenedLabel: 'खुलने के बाद शेल्फ लाइफ:',
+    packSpecLabel: 'पैकेजिंग और भंडारण नियम:',
   },
 };
 
@@ -215,6 +282,14 @@ export default function App() {
   const t = UI_TRANSLATIONS[lang];
   const ex = EXTRA_LABELS[lang];
 
+  const [items, setItems] = useState<FoodItem[]>(() => [...FOOD_ITEMS]);
+  const [systemConfig, setSystemConfig] = useState<SystemConfig>(
+    DEFAULT_SYSTEM_CONFIG
+  );
+  const isOnline = useOnlineStatus();
+  const [adminOpen, setAdminOpen] = useState<boolean>(false);
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined'
       ? window.matchMedia('(max-width: 639px)').matches
@@ -230,6 +305,49 @@ export default function App() {
   const [copiedLabel, setCopiedLabel] = useState<string>('');
   const [groupMenuOpen, setGroupMenuOpen] = useState<boolean>(false);
   const [langMenuOpen, setLangMenuOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const [dbItems, dbConfig, cloudCfg] = await Promise.all([
+        loadAllItemsFromDb(),
+        loadSystemConfig(),
+        loadCloudConfig(),
+      ]);
+      if (!active) return;
+      if (dbItems.length > 0) setItems(dbItems);
+      setSystemConfig(dbConfig);
+
+      if (isOnline && getCloudSyncStatus(cloudCfg).configured) {
+        const lastSyncRow = await db.meta.get('lastCloudSyncedAt');
+        const localSyncedAt = Number(lastSyncRow?.value || 0);
+        const remote = await pullCatalogFromCloud(cloudCfg);
+        if (
+          active &&
+          remote.ok &&
+          remote.items &&
+          remote.items.length > 0 &&
+          (remote.syncedAt || 0) > localSyncedAt
+        ) {
+          const syncedItems = await applyImportedItemsToDb(
+            remote.items,
+            'overwrite',
+            remote.config
+          );
+          await db.meta.put({
+            key: 'lastCloudSyncedAt',
+            value: String(remote.syncedAt || Date.now()),
+          });
+          if (!active) return;
+          setItems(syncedItems);
+          if (remote.config) setSystemConfig(remote.config);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isOnline]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -256,39 +374,50 @@ export default function App() {
     typeof window !== 'undefined' ? window.location.protocol !== 'file:' : true
   );
 
+  const openItemDetail = useCallback((item: FoodItem) => {
+    setSelectedItem(item);
+    void recordItemViewBehavior(item);
+  }, []);
+
   const appendixCounts = useMemo(() => {
     let pl1 = 0;
     let pl2 = 0;
     let pl3 = 0;
-    for (const item of FOOD_ITEMS) {
+    for (const item of items) {
       if (item.a === 'PL1') pl1 += 1;
       else if (item.a === 'PL2') pl2 += 1;
       else pl3 += 1;
     }
     return {
-      ALL: FOOD_ITEMS.length,
+      ALL: items.length,
       PL1: pl1,
       PL2: pl2,
       PL3: pl3,
     };
-  }, []);
+  }, [items]);
 
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const item of FOOD_ITEMS) {
+    for (const item of items) {
       counts[item.g] = (counts[item.g] || 0) + 1;
     }
     return counts;
-  }, []);
+  }, [items]);
 
   const visibleGroupOptions = useMemo(() => {
-    if (appendix === 'ALL') return ALL_GROUPS;
+    if (appendix === 'ALL') {
+      const set = new Set<string>(ALL_GROUPS);
+      for (const item of items) {
+        if (item.g) set.add(item.g);
+      }
+      return Array.from(set);
+    }
     return [
       ...new Set(
-        FOOD_ITEMS.filter((item) => item.a === appendix).map((item) => item.g)
+        items.filter((item) => item.a === appendix).map((item) => item.g)
       ),
     ];
-  }, [appendix]);
+  }, [appendix, items]);
 
   useEffect(() => {
     if (!groupMenuOpen && !langMenuOpen) return;
@@ -449,7 +578,7 @@ export default function App() {
     if (aiLastKeyRef.current === requestKey) return;
 
     const localInstant = runSmartSearch({
-      items: FOOD_ITEMS,
+      items,
       query: q,
       lang,
       aiMatchedCodes: [],
@@ -458,6 +587,7 @@ export default function App() {
     const wordCount = q.split(/\s+/).filter(Boolean).length;
     const isCodeQuery = /^pl[123][- ]?\d{1,2}$/i.test(q);
     const shouldAutoTriggerAi =
+      isOnline &&
       !isCodeQuery &&
       (localInstant.length === 0 || wordCount >= 2 || q.length >= 6);
 
@@ -468,12 +598,12 @@ export default function App() {
     }, 520);
 
     return () => window.clearTimeout(timer);
-  }, [query, lang, triggerAiSearch, aiLastQuery]);
+  }, [query, lang, triggerAiSearch, aiLastQuery, items, isOnline]);
 
   const handleSelectGroup = (nextGroup: string) => {
     setGroup(nextGroup);
     if (nextGroup !== 'ALL') {
-      const matchedAppendix = FOOD_ITEMS.find((item) => item.g === nextGroup)?.a;
+      const matchedAppendix = items.find((item) => item.g === nextGroup)?.a;
       if (matchedAppendix) setAppendix(matchedAppendix);
     }
     setGroupMenuOpen(false);
@@ -497,23 +627,23 @@ export default function App() {
   };
 
   const filteredItems = useMemo(() => {
-    let items = [...FOOD_ITEMS];
-    if (appendix !== 'ALL') items = items.filter((item) => item.a === appendix);
-    if (group !== 'ALL') items = items.filter((item) => item.g === group);
+    let list = [...items];
+    if (appendix !== 'ALL') list = list.filter((item) => item.a === appendix);
+    if (group !== 'ALL') list = list.filter((item) => item.g === group);
     if (storageFilter === 'room') {
-      items = items.filter((item) => hasCellValue(item.room));
+      list = list.filter((item) => hasCellValue(item.room));
     }
     if (storageFilter === 'cool') {
-      items = items.filter((item) => hasCellValue(item.cool));
+      list = list.filter((item) => hasCellValue(item.cool));
     }
     if (storageFilter === 'freeze') {
-      items = items.filter((item) => hasCellValue(item.freeze));
+      list = list.filter((item) => hasCellValue(item.freeze));
     }
 
     if (quickHygiene === 'today') {
-      items = items.filter((item) => hasUseToday(item));
+      list = list.filter((item) => hasUseToday(item));
     } else if (quickHygiene === 'hotDisplay') {
-      items = items.filter(
+      list = list.filter(
         (item) =>
           Boolean(item.displayHot) &&
           item.displayHot !== '—' &&
@@ -524,18 +654,19 @@ export default function App() {
     const q = query.trim();
     if (q) {
       return runSmartSearch({
-        items,
+        items: list,
         query: q,
         lang,
         aiMatchedCodes,
       });
     }
 
-    items.sort((a, b) =>
+    list.sort((a, b) =>
       a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1
     );
-    return items;
+    return list;
   }, [
+    items,
     query,
     appendix,
     group,
@@ -544,6 +675,15 @@ export default function App() {
     lang,
     aiMatchedCodes,
   ]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    const timer = window.setTimeout(() => {
+      void recordSearchBehavior(q, lang, filteredItems.length);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [query, lang, filteredItems.length]);
 
   const copyExcerpt = (text: string, label: string) => {
     const showToast = () => {
@@ -616,10 +756,10 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
       {/* Top Bar (Mobile: refined 2-line crest + ultra-compact language dropdown; PC: full editorial lockup) */}
       <header className="relative z-50 bg-[#122A47] text-white border-b border-[#C9A227]/60">
         <div className="mx-auto max-w-[1360px] px-3.5 sm:px-6 py-2.5 sm:py-3.5">
-          <div className="flex items-center justify-between gap-2 sm:gap-6">
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
             <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
               <img
-                src="/bnc-logo.jpg"
+                src={systemConfig.logoUrl || '/bnc-logo.jpg'}
                 data-fnb-logo="1"
                 alt="F&B BNC"
                 referrerPolicy="no-referrer"
@@ -627,100 +767,152 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
               />
               <div className="min-w-0 flex-1">
                 <p className="sm:hidden text-[14.5px] font-extrabold tracking-tight leading-[1.3] text-white whitespace-nowrap">
-                  {ex.mobileTitleLine1}
+                  {lang === 'VI'
+                    ? systemConfig.mobileTitleLine1 || ex.mobileTitleLine1
+                    : ex.mobileTitleLine1}
                 </p>
                 <p className="sm:hidden text-[clamp(8.4px,2.25vw,10.5px)] font-semibold tracking-[0.015em] text-white/85 mt-0.5 leading-[1.55] pt-[1px] truncate">
-                  {t.subtitle}
+                  {lang === 'VI'
+                    ? systemConfig.appSubtitle || t.subtitle
+                    : t.subtitle}
                 </p>
                 <h1 className="hidden sm:block text-[17px] lg:text-[19px] font-extrabold tracking-tight leading-snug text-white text-balance">
-                  {t.title}
+                  {lang === 'VI' ? systemConfig.appTitle || t.title : t.title}
                 </h1>
                 <p className="hidden sm:block text-[11px] font-semibold tracking-wider text-[#E2C665] mt-0.5 leading-normal truncate">
-                  {t.subtitle}
+                  {lang === 'VI'
+                    ? systemConfig.appSubtitle || t.subtitle
+                    : t.subtitle}
                 </p>
               </div>
             </div>
 
-            {/* Mobile Ultra-Compact Language Dropdown */}
-            <div ref={langDropdownRef} className="relative sm:hidden shrink-0">
+            {/* Mobile Utility Cluster: PWA Install + History + Admin + Language Dropdown */}
+            <div className="flex items-center gap-1 sm:hidden shrink-0">
+              <PWAInstallButton compact lang={lang} />
               <button
                 type="button"
-                onClick={() => setLangMenuOpen((prev) => !prev)}
-                aria-haspopup="listbox"
-                aria-expanded={langMenuOpen}
-                aria-label="Language"
-                className="h-[28px] px-2 rounded-lg border border-white/25 bg-white/10 hover:bg-white/15 flex items-center gap-1 text-[11px] font-bold text-white transition-colors"
+                onClick={() => setHistoryOpen(true)}
+                aria-label={ex.historyTitle}
+                title={ex.historyTitle}
+                className="h-[28px] w-[28px] rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 flex items-center justify-center text-white"
               >
-                <Globe size={12} className="text-[#E2C665] shrink-0" />
-                <span>{lang}</span>
-                <ChevronDown
-                  size={11}
-                  className={`text-white/80 transition-transform duration-150 ${
-                    langMenuOpen ? 'rotate-180' : ''
-                  }`}
-                />
+                <History size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminOpen(true)}
+                aria-label={ex.adminTitle}
+                title={ex.adminTitle}
+                className="h-[28px] w-[28px] rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 flex items-center justify-center text-[#E2C665]"
+              >
+                <ShieldCheck size={13} />
               </button>
 
-              {langMenuOpen && (
-                <div
-                  role="listbox"
+              <div ref={langDropdownRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setLangMenuOpen((prev) => !prev)}
+                  aria-haspopup="listbox"
+                  aria-expanded={langMenuOpen}
                   aria-label="Language"
-                  className="fade-in absolute right-0 top-full z-50 mt-1.5 w-40 rounded-xl border border-[#DFD9CB] bg-white p-1 text-[#182230] shadow-[0_16px_36px_rgba(15,23,42,0.22)]"
+                  className="h-[28px] px-2 rounded-lg border border-white/25 bg-white/10 hover:bg-white/15 flex items-center gap-1 text-[11px] font-bold text-white transition-colors"
                 >
-                  {LANGS.map((code) => {
-                    const active = lang === code;
-                    return (
-                      <button
-                        key={code}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onClick={() => {
-                          setLang(code);
-                          setLangMenuOpen(false);
-                        }}
-                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors ${
-                          active
-                            ? 'bg-[#F2EFE8] font-bold text-[#122A47]'
-                            : 'font-medium text-[#182230] hover:bg-[#F6F4EF]'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className="font-mono text-[11px] font-bold text-[#8A6510]">
-                            {code}
+                  <Globe size={12} className="text-[#E2C665] shrink-0" />
+                  <span>{lang}</span>
+                  <ChevronDown
+                    size={11}
+                    className={`text-white/80 transition-transform duration-150 ${
+                      langMenuOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {langMenuOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="Language"
+                    className="fade-in absolute right-0 top-full z-50 mt-1.5 w-40 rounded-xl border border-[#DFD9CB] bg-white p-1 text-[#182230] shadow-[0_16px_36px_rgba(15,23,42,0.22)]"
+                  >
+                    {LANGS.map((code) => {
+                      const active = lang === code;
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          onClick={() => {
+                            setLang(code);
+                            setLangMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors ${
+                            active
+                              ? 'bg-[#F2EFE8] font-bold text-[#122A47]'
+                              : 'font-medium text-[#182230] hover:bg-[#F6F4EF]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="font-mono text-[11px] font-bold text-[#8A6510]">
+                              {code}
+                            </span>
+                            <span>{LANG_FULL_NAMES[code]}</span>
                           </span>
-                          <span>{LANG_FULL_NAMES[code]}</span>
-                        </span>
-                        {active && <Check size={14} className="text-[#1E4A75]" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                          {active && <Check size={14} className="text-[#1E4A75]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Desktop / Tablet Segmented Language Switcher */}
-            <div
-              className="hidden sm:flex items-center shrink-0 rounded-lg border border-white/20 bg-white/10 p-0.5"
-              role="group"
-              aria-label="Language"
-            >
-              {LANGS.map((code) => (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => setLang(code)}
-                  aria-pressed={lang === code}
-                  aria-label={code}
-                  className={`h-[36px] min-w-[40px] px-2.5 rounded-md text-[12px] font-bold whitespace-nowrap transition-colors ${
-                    lang === code
-                      ? 'bg-[#C9A227] text-[#122A47]'
-                      : 'text-white/85 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {code}
-                </button>
-              ))}
+            {/* Desktop / Tablet Action Cluster + Segmented Language Switcher */}
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              <PWAInstallButton lang={lang} />
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                title={ex.historyTitle}
+                aria-label={ex.historyTitle}
+                className="h-[34px] px-2.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 text-[12px] font-bold text-white flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              >
+                <History size={14} className="text-[#E2C665]" />
+                <span className="hidden lg:inline">{ex.historyBtn}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminOpen(true)}
+                title={ex.adminTitle}
+                aria-label={ex.adminTitle}
+                className="h-[34px] px-2.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 text-[12px] font-bold text-white flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              >
+                <ShieldCheck size={14} className="text-[#E2C665]" />
+                <span>{ex.adminBtn}</span>
+              </button>
+
+              <div
+                className="flex items-center shrink-0 rounded-lg border border-white/20 bg-white/10 p-0.5"
+                role="group"
+                aria-label="Language"
+              >
+                {LANGS.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => setLang(code)}
+                    aria-pressed={lang === code}
+                    aria-label={code}
+                    className={`h-[34px] min-w-[38px] px-2 rounded-md text-[12px] font-bold whitespace-nowrap transition-colors ${
+                      lang === code
+                        ? 'bg-[#C9A227] text-[#122A47]'
+                        : 'text-white/85 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -730,10 +922,15 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
             aria-level={1}
             className="sm:hidden mt-2 pt-1.5 border-t border-white/12 text-[clamp(8.8px,2.56vw,11.5px)] font-extrabold tracking-[-0.012em] leading-tight text-[#F3DA7B] whitespace-nowrap"
           >
-            {ex.mobileTitleLine2}
+            {lang === 'VI'
+              ? systemConfig.mobileTitleLine2 || ex.mobileTitleLine2
+              : ex.mobileTitleLine2}
           </p>
         </div>
       </header>
+
+      {/* Real-time Offline Indicator Badge */}
+      <OfflineStatusBadge isOnline={isOnline} lang={lang} />
 
       {/* Compact Sticky Search Dock */}
       <div className="sticky top-[var(--safe-area-inset-top)] z-40 bg-[#122A47]/95 backdrop-blur-md border-b border-[#C9A227]/70 shadow-[0_8px_24px_rgba(18,42,71,0.16)]">
@@ -813,6 +1010,21 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
 
       {/* Main Content */}
       <main className="mx-auto w-full max-w-[1360px] flex-1 px-3.5 sm:px-6 py-3.5 sm:py-6 pb-10">
+        {systemConfig.alertBannerEnabled && systemConfig.alertBannerText && (
+          <div className="mb-3 rounded-xl border border-[#DFBA51] bg-[#FDF8EB] px-3.5 py-2.5 flex items-center gap-2 text-[12.5px] font-bold text-[#7D5B0F]">
+            <Megaphone size={15} className="shrink-0 text-[#9A6700]" />
+            <span className="leading-snug">{systemConfig.alertBannerText}</span>
+          </div>
+        )}
+        {systemConfig.bannerImageUrl && (
+          <div className="mb-3 overflow-hidden rounded-2xl border border-[#E2DDD0] bg-white">
+            <img
+              src={systemConfig.bannerImageUrl}
+              alt="Banner hệ thống"
+              className="w-full max-h-40 object-cover"
+            />
+          </div>
+        )}
         {/* Appendix Segmented Tabs + Swipeable Quick Operational Hygiene Presets */}
         <div className="flex flex-col gap-2.5 sm:gap-3">
           <div className="relative -mx-3.5 sm:mx-0">
@@ -1196,7 +1408,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
 
                     <button
                       type="button"
-                      onClick={() => setSelectedItem(item)}
+                      onClick={() => openItemDetail(item)}
                       className="text-left mt-2 w-full group"
                     >
                       <h3 className="font-extrabold text-[16.5px] leading-snug text-[#122A47] group-hover:text-[#1E4A75] transition-colors">
@@ -1319,7 +1531,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     <div className="flex items-center gap-2 mt-auto">
                       <button
                         type="button"
-                        onClick={() => setSelectedItem(item)}
+                        onClick={() => openItemDetail(item)}
                         className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-[#122A47] text-white text-[13px] font-bold hover:bg-[#1E4A75] flex items-center justify-center gap-1 transition-colors"
                       >
                         <span>{t.detail}</span>
@@ -1373,7 +1585,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedItem(item)}
+                        onClick={() => openItemDetail(item)}
                         className="text-left min-w-0 flex-1"
                       >
                         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -1396,7 +1608,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          onClick={() => setSelectedItem(item)}
+                          onClick={() => openItemDetail(item)}
                           className="min-h-[38px] px-3 py-1.5 rounded-lg bg-[#122A47] text-white text-[12px] font-bold hover:bg-[#1E4A75]"
                         >
                           {t.detail}
@@ -1493,7 +1705,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     </span>
                     <button
                       type="button"
-                      onClick={() => setSelectedItem(item)}
+                      onClick={() => openItemDetail(item)}
                       className="text-left font-bold text-[14px] text-[#122A47] hover:text-[#1E4A75]"
                     >
                       <span>{itemName}</span>
@@ -1548,7 +1760,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     <span className="flex gap-1.5 justify-end">
                       <button
                         type="button"
-                        onClick={() => setSelectedItem(item)}
+                        onClick={() => openItemDetail(item)}
                         className="min-h-[36px] px-3 py-1.5 rounded-lg bg-[#122A47] text-white text-[12px] font-bold hover:bg-[#1E4A75]"
                       >
                         {t.detail}
@@ -1570,7 +1782,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                     <div className="flex items-start justify-between gap-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedItem(item)}
+                        onClick={() => openItemDetail(item)}
                         className="text-left min-w-0 flex-1"
                       >
                         <div className="flex items-center gap-1.5 text-[11.5px]">
@@ -1596,7 +1808,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          onClick={() => setSelectedItem(item)}
+                          onClick={() => openItemDetail(item)}
                           className="min-h-[40px] px-3 rounded-lg bg-[#122A47] text-white text-[12px] font-bold"
                         >
                           {t.detail}
@@ -1716,7 +1928,7 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
 
       {/* Quiet Footer */}
       <footer className="border-t border-[#C9A227]/70 bg-[#122A47]">
-        <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 text-[12.5px] font-semibold text-[#E2C665]">
+        <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 pb-16 sm:pb-4 sm:pr-44 text-[12.5px] font-semibold text-[#E2C665]">
           <span>{ex.footerInternal}</span>
           <span className="font-normal">by Le Hoang Phuc</span>
         </div>
@@ -1899,14 +2111,54 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
                 </p>
               </div>
 
-              {translateFlag(selectedItem, lang) && (
+              {(selectedItem.standardTemp ||
+                selectedItem.shelfLifeUnopened ||
+                selectedItem.shelfLifeOpened ||
+                selectedItem.packagingSpec) && (
+                <div className="rounded-xl border border-[#D4E2EA] bg-[#F1F7FA] p-4 space-y-1.5 text-[13px] text-[#182230]">
+                  {selectedItem.standardTemp && (
+                    <p>
+                      <strong className="text-[#122A47]">
+                        {ex.stdTempLabel}
+                      </strong>{' '}
+                      {selectedItem.standardTemp}
+                    </p>
+                  )}
+                  {selectedItem.shelfLifeUnopened && (
+                    <p>
+                      <strong className="text-[#122A47]">
+                        {ex.hsdUnopenedLabel}
+                      </strong>{' '}
+                      {selectedItem.shelfLifeUnopened}
+                    </p>
+                  )}
+                  {selectedItem.shelfLifeOpened && (
+                    <p>
+                      <strong className="text-[#122A47]">
+                        {ex.hsdOpenedLabel}
+                      </strong>{' '}
+                      {selectedItem.shelfLifeOpened}
+                    </p>
+                  )}
+                  {selectedItem.packagingSpec && (
+                    <p>
+                      <strong className="text-[#122A47]">
+                        {ex.packSpecLabel}
+                      </strong>{' '}
+                      {selectedItem.packagingSpec}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {(translateFlag(selectedItem, lang) || selectedItem.haccpNote) && (
                 <div className="rounded-xl border border-[#E8D9A8] bg-[#FDF8EB] p-4">
                   <p className="text-[11px] font-bold tracking-wider text-[#8A6510] flex items-center gap-1.5">
                     <TriangleAlert size={13} />
                     <span>{t.qaTitle}</span>
                   </p>
                   <p className="text-[14px] leading-relaxed mt-1.5 text-[#182230]">
-                    {translateFlag(selectedItem, lang)}
+                    {selectedItem.haccpNote || translateFlag(selectedItem, lang)}
                   </p>
                 </div>
               )}
@@ -1943,6 +2195,45 @@ ${t.noteLabel}: ${isEmptyCell(item.note) ? t.emptyNote : translateItemNote(item,
           </div>
         </div>
       )}
+
+      {/* Offline Behavior History Panel */}
+      <MyHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        items={items}
+        lang={lang}
+        onApplySearch={(kw) => setQuery(kw)}
+        onSelectItem={(item) => openItemDetail(item)}
+      />
+
+      {/* RBAC Admin Management Panel */}
+      <AdminPanel
+        open={adminOpen}
+        onClose={() => setAdminOpen(false)}
+        items={items}
+        lang={lang}
+        onItemsUpdated={(next) => {
+          setItems(next);
+          if (isOnline) {
+            void syncCatalogToCloud(next, systemConfig);
+          }
+        }}
+        config={systemConfig}
+        onConfigUpdated={(cfg) => {
+          setSystemConfig(cfg);
+          if (isOnline) {
+            void syncCatalogToCloud(items, cfg);
+          }
+        }}
+      />
+
+      {/* Floating Smart Anti-Hallucination AI Chatbox */}
+      <AIChatbox
+        items={items}
+        lang={lang}
+        isOnline={isOnline}
+        onSelectItem={(item) => openItemDetail(item)}
+      />
     </div>
   );
 }

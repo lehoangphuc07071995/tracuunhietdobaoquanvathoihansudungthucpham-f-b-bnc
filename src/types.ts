@@ -44,6 +44,80 @@ export interface FoodItem {
   weight?: string;
   displayCool?: string;
   displayHot?: string;
+  // Extended admin/QA metadata (preserved alongside official baseline fields)
+  standardTemp?: string;
+  shelfLifeUnopened?: string;
+  shelfLifeOpened?: string;
+  packagingSpec?: string;
+  haccpNote?: string;
+  isCustom?: boolean;
+  updatedAt?: number;
+}
+
+export interface SystemConfig {
+  id: 'system';
+  appTitle: string;
+  appSubtitle: string;
+  mobileTitleLine1: string;
+  mobileTitleLine2: string;
+  logoUrl: string;
+  bannerImageUrl: string;
+  alertBannerText: string;
+  alertBannerEnabled: boolean;
+  updatedAt: number;
+}
+
+export type AdminPermission =
+  | 'manage_config'
+  | 'edit_items'
+  | 'delete_items'
+  | 'view_export_reports'
+  | 'import_data';
+
+export type AdminRole = 'super_admin' | 'sub_admin';
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  passwordHash: string;
+  role: AdminRole;
+  permissions: AdminPermission[];
+  allowedGroups: string[]; // ['ALL'] or specific food group names
+  createdAt: number;
+}
+
+export interface SearchHistoryEntry {
+  id?: number;
+  keyword: string;
+  lang: Lang;
+  resultCount: number;
+  timestamp: number;
+}
+
+export interface ViewStatEntry {
+  itemCode: string;
+  itemName: string;
+  group: string;
+  appendix: AppendixCode;
+  viewCount: number;
+  lastViewedAt: number;
+}
+
+export interface AiChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  matchedCodes?: string[];
+  mode?: 'online_ai' | 'offline_local';
+  timestamp: number;
+}
+
+export interface AiHistoryEntry {
+  id?: number;
+  question: string;
+  answer: string;
+  matchedCodes: string[];
+  mode: 'online_ai' | 'offline_local';
+  timestamp: number;
 }
 
 export interface UiTranslation {

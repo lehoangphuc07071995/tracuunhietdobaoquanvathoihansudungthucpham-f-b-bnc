@@ -33,7 +33,9 @@ async function buildSingleHtml() {
 
   const assetFiles = fs.readdirSync(distAssetsDir);
   const cssFile = assetFiles.find((f) => f.endsWith('.css'));
-  const jsFile = assetFiles.find((f) => f.endsWith('.js'));
+  const jsFile =
+    assetFiles.find((f) => f.startsWith('index-') && f.endsWith('.js')) ||
+    assetFiles.find((f) => f.endsWith('.js'));
 
   if (!cssFile || !jsFile) {
     throw new Error('Expected CSS and JS bundle files in dist/assets/.');
@@ -94,8 +96,8 @@ async function buildSingleHtml() {
 
   let html = fs.readFileSync(distHtmlPath, 'utf8');
 
-  // Remove Vite external stylesheet & module script tags
-  html = html.replace(/<script[^>]+src="\/assets\/[^"]+"[^>]*><\/script>\s*/g, '');
+  // Remove Vite external stylesheet, PWA SW registration & module script tags
+  html = html.replace(/<script[^>]+src="\/(?:assets|registerSW)[^"]*"[^>]*><\/script>\s*/g, '');
   html = html.replace(/<link[^>]+rel="stylesheet"[^>]+href="\/assets\/[^"]+"[^>]*>\s*/g, '');
 
   // Inline head icon & manifest links so 1 single HTML file is 100% self-contained
