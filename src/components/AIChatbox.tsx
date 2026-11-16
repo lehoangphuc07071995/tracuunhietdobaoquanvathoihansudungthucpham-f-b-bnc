@@ -41,7 +41,6 @@ const CHAT_TEXT: Record<
     triggerLabel: string;
     triggerAria: string;
     headerTitle: string;
-    onlineSubtitle: string;
     offlineSubtitle: string;
     clearTitle: string;
     closeAria: string;
@@ -63,7 +62,6 @@ const CHAT_TEXT: Record<
     triggerLabel: 'Trợ lý AI',
     triggerAria: 'Mở Trợ lý AI tra cứu nội bộ',
     headerTitle: 'Trợ lý AI Tra Cứu Nội Bộ',
-    onlineSubtitle: 'RAG 100% Dữ liệu BNC · Nhớ 10 lượt',
     offlineSubtitle: 'Offline · Tìm kiếm thông minh cục bộ',
     clearTitle: 'Xóa đoạn chat hiện tại',
     closeAria: 'Đóng chatbox',
@@ -79,7 +77,7 @@ const CHAT_TEXT: Record<
       'Những món nào bảo quản kho đông ≤ -18°C?',
       'Bánh sừng bò bảo quản nhiệt độ phòng và tủ mát thế nào?',
     ],
-    placeholder: 'Hỏi nhiệt độ, HSD, mở bao bì, kho đông...',
+    placeholder: 'Nhập bất kì thông tin liên quan bạn cần tư vấn',
     sendAria: 'Gửi câu hỏi',
     localSummaryPrefix: 'Kết quả tra cứu dữ liệu cục bộ trên máy',
     unopenedLabel: 'Chưa mở',
@@ -90,7 +88,6 @@ const CHAT_TEXT: Record<
     triggerLabel: 'AI Assistant',
     triggerAria: 'Open Internal Lookup AI Assistant',
     headerTitle: 'Internal Food Lookup AI',
-    onlineSubtitle: '100% BNC Database RAG · 10-turn memory',
     offlineSubtitle: 'Offline · Smart Local Search',
     clearTitle: 'Clear current chat',
     closeAria: 'Close chatbox',
@@ -106,7 +103,7 @@ const CHAT_TEXT: Record<
       'Which items are stored in frozen storage ≤ -18°C?',
       'How should croissants be stored at room temp vs chilled?',
     ],
-    placeholder: 'Ask temperature, shelf life, opened rules...',
+    placeholder: 'Enter any related information you need advice on',
     sendAria: 'Send question',
     localSummaryPrefix: 'Local offline database results',
     unopenedLabel: 'Unopened',
@@ -117,7 +114,6 @@ const CHAT_TEXT: Record<
     triggerLabel: 'AI 도우미',
     triggerAria: '사내 조회 AI 도우미 열기',
     headerTitle: '사내 식품 조회 AI 도우미',
-    onlineSubtitle: 'BNC 공식 데이터 100% 기반 · 10턴 기억',
     offlineSubtitle: '오프라인 · 로컬 스마트 검색',
     clearTitle: '현재 대화 지우기',
     closeAria: '채팅창 닫기',
@@ -133,7 +129,7 @@ const CHAT_TEXT: Record<
       '냉동(≤ -18°C) 보관 대상 품목은 무엇인가요?',
       '크루아상의 실온 및 냉장 보관 기준이 어떻게 되나요?',
     ],
-    placeholder: '온도, 유통기한, 개봉 후 기준 등을 물어보세요...',
+    placeholder: '상담이 필요한 관련 정보를 무엇이든 입력하세요',
     sendAria: '질문 보내기',
     localSummaryPrefix: '기기 내 로컬 데이터 검색 결과',
     unopenedLabel: '미개봉',
@@ -144,7 +140,6 @@ const CHAT_TEXT: Record<
     triggerLabel: 'AI सहायक',
     triggerAria: 'आंतरिक खोज AI सहायक खोलें',
     headerTitle: 'आंतरिक खाद्य खोज AI सहायक',
-    onlineSubtitle: '100% BNC डेटा आधारित · 10-टर्न मेमोरी',
     offlineSubtitle: 'ऑफ़लाइन · स्मार्ट लोकल सर्च',
     clearTitle: 'वर्तमान चैट साफ़ करें',
     closeAria: 'चैटबॉट बंद करें',
@@ -160,7 +155,7 @@ const CHAT_TEXT: Record<
       'कौन-से आइटम फ़्रीज़र (≤ -18°C) में रखे जाते हैं?',
       'क्रोइसैन को कमरे के तापमान और ठंडे भंडारण में कैसे रखें?',
     ],
-    placeholder: 'तापमान, शेल्फ लाइफ, खोलने के नियम पूछें...',
+    placeholder: 'परामर्श के लिए कोई भी संबंधित जानकारी दर्ज करें',
     sendAria: 'प्रश्न भेजें',
     localSummaryPrefix: 'डिवाइस पर ऑफ़लाइन डेटा परिणाम',
     unopenedLabel: 'बिना खुला',
@@ -537,16 +532,12 @@ export function AIChatbox({
                 <h3 className="text-[14px] font-extrabold leading-tight truncate">
                   {L.headerTitle}
                 </h3>
-                <p className="text-[11px] text-[#E2C665] truncate flex items-center gap-1 mt-0.5">
-                  {isOnline ? (
-                    <span>{L.onlineSubtitle}</span>
-                  ) : (
-                    <>
-                      <WifiOff size={11} />
-                      <span>{L.offlineSubtitle}</span>
-                    </>
-                  )}
-                </p>
+                {!isOnline && (
+                  <p className="text-[11px] text-[#E2C665] truncate flex items-center gap-1 mt-0.5">
+                    <WifiOff size={11} />
+                    <span>{L.offlineSubtitle}</span>
+                  </p>
+                )}
               </div>
             </div>
 
