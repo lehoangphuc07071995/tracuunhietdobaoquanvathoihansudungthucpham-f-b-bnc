@@ -9,20 +9,15 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import {
-  getItemCode,
-  hasCellValue,
-  hasUseToday,
-  isEmptyCell,
-} from '../data/foodData';
-import {
-  UI_TRANSLATIONS,
-  translateDuration,
-  translateItemName,
-  translateItemNote,
-} from '../data/translations';
+import { getItemCode } from '../data/foodData';
+import { translateItemName } from '../data/translations';
 import { recordAiHistory } from '../db/dexieDb';
-import { normalizeText, runSmartSearch } from '../utils/smartSearch';
+import {
+  buildNotFoundFallbackReply,
+  resolveChatQueryLocally,
+  type ChatPaginationState,
+  type PendingDisambiguation,
+} from '../utils/chatEngine';
 import type { AiChatTurn, FoodItem, Lang } from '../types';
 
 const NOT_FOUND_MESSAGE =
@@ -164,194 +159,6 @@ const CHAT_TEXT: Record<
   },
 };
 
-const STOP_WORDS = new Set([
-  'nhung',
-  'mon',
-  'nao',
-  'cac',
-  'bao',
-  'quan',
-  'o',
-  'tai',
-  'trong',
-  'may',
-  'ngay',
-  'gio',
-  'lau',
-  'duoc',
-  'la',
-  'gi',
-  'the',
-  'sao',
-  'cho',
-  'hoi',
-  've',
-  'cua',
-  'khi',
-  'va',
-  'hay',
-  'co',
-  'khong',
-  'nhu',
-  'can',
-  'dung',
-  'de',
-  'nhiet',
-  'do',
-  'han',
-  'su',
-  'hsd',
-  'tu',
-  'kho',
-  'how',
-  'long',
-  'what',
-  'which',
-  'items',
-  'item',
-  'store',
-  'stored',
-  'storage',
-  'keep',
-  'kept',
-  'are',
-  'is',
-  'in',
-  'at',
-  'for',
-  'and',
-  'or',
-  'days',
-  'hours',
-  'temp',
-  'temperature',
-  'shelf',
-  'life',
-  'vs',
-]);
-
-function extractMeaningfulKeywords(raw: string): string {
-  const cleaned = normalizeText(raw)
-    .replace(/[?!.,:;°≤≥()[\]{}"']/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
-  return cleaned.join(' ').trim();
-}
-
-function buildOfflineLocalReply(
-  query: string,
-  items: FoodItem[],
-  lang: Lang
-): {
-  reply: string;
-  matchedCodes: string[];
-} {
-  const L = CHAT_TEXT[lang];
-  const t = UI_TRANSLATIONS[lang];
-  const qNorm = normalizeText(query);
-
-  let pool = items;
-  let intentApplied = false;
-
-  const isListingIntent =
-    qNorm.includes('nhung') ||
-    qNorm.includes('cac') ||
-    qNorm.includes('which') ||
-    qNorm.includes('liet ke') ||
-    qNorm.includes('all ') ||
-    qNorm.includes('무엇') ||
-    qNorm.includes('कौन');
-
-  if (qNorm.includes('-18') || qNorm.includes('khodong') || qNorm.includes('frozen') || qNorm.includes('freeze') || qNorm.includes('냉동') || qNorm.includes('फ़्रीज़')) {
-    const filtered = pool.filter((it) => hasCellValue(it.freeze));
-    if (isListingIntent) {
-      pool = filtered;
-      intentApplied = true;
-    }
-  } else if (qNorm.includes('1-4') || qNorm.includes('kholanh') || qNorm.includes('chilled') || qNorm.includes('냉장')) {
-    const filtered = pool.filter((it) => hasCellValue(it.cool));
-    if (isListingIntent) {
-      pool = filtered;
-      intentApplied = true;
-    }
-  } else if (qNorm.includes('nhietdophong') || qNorm.includes('room') || qNorm.includes('실온')) {
-    const filtered = pool.filter((it) => hasCellValue(it.room));
-    if (isListingIntent) {
-      pool = filtered;
-      intentApplied = true;
-    }
-  } else if (qNorm.includes('trongngay') || qNorm.includes('today') || qNorm.includes('당일')) {
-    const filtered = pool.filter((it) => hasUseToday(it));
-    if (isListingIntent) {
-      pool = filtered;
-      intentApplied = true;
-    }
-  }
-
-  let hits: FoodItem[] = [];
-  if (intentApplied) {
-    const stripped = extractMeaningfulKeywords(query);
-    if (stripped) {
-      const refined = runSmartSearch({ items: pool, query: stripped, lang });
-      hits = (refined.length > 0 ? refined : pool).slice(0, 8);
-    } else {
-      hits = pool.slice(0, 8);
-    }
-  } else {
-    hits = runSmartSearch({ items: pool, query, lang });
-    if (hits.length === 0) {
-      const stripped = extractMeaningfulKeywords(query);
-      if (stripped) {
-        hits = runSmartSearch({ items: pool, query: stripped, lang });
-      }
-    }
-    hits = hits.slice(0, 6);
-  }
-
-  if (hits.length === 0) {
-    return {
-      reply: NOT_FOUND_MESSAGE,
-      matchedCodes: [],
-    };
-  }
-
-  const lines = hits.map((it) => {
-    const code = getItemCode(it);
-    const itemName = translateItemName(it, lang);
-    const specs: string[] = [];
-    if (hasCellValue(it.room)) {
-      specs.push(`${t.colRoom}: ${translateDuration(it.room, lang)}`);
-    }
-    if (hasCellValue(it.cool)) {
-      specs.push(`${t.colCool}: ${translateDuration(it.cool, lang)}`);
-    }
-    if (hasCellValue(it.freeze)) {
-      specs.push(`${t.colFreeze}: ${translateDuration(it.freeze, lang)}`);
-    }
-    if (it.shelfLifeUnopened) {
-      specs.push(`${L.unopenedLabel}: ${it.shelfLifeUnopened}`);
-    }
-    if (it.shelfLifeOpened) {
-      specs.push(`${L.openedLabel}: ${it.shelfLifeOpened}`);
-    }
-    if (it.displayCool && !isEmptyCell(it.displayCool)) {
-      specs.push(`${t.colDisplayCool}: ${translateDuration(it.displayCool, lang)}`);
-    }
-    if (it.displayHot && !isEmptyCell(it.displayHot)) {
-      specs.push(`${t.colDisplayHot}: ${translateDuration(it.displayHot, lang)}`);
-    }
-    if (!isEmptyCell(it.note)) {
-      specs.push(`${L.noteLabel}: ${translateItemNote(it, lang)}`);
-    }
-    return `• [${code}] ${itemName}\n  ${specs.join(' | ')}`;
-  });
-
-  return {
-    reply: `${L.localSummaryPrefix} (${hits.length}):\n\n${lines.join('\n\n')}`,
-    matchedCodes: hits.map((h) => getItemCode(h)),
-  };
-}
-
 export function AIChatbox({
   items,
   lang,
@@ -362,6 +169,10 @@ export function AIChatbox({
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [paginationState, setPaginationState] =
+    useState<ChatPaginationState | null>(null);
+  const [pendingDisambiguation, setPendingDisambiguation] =
+    useState<PendingDisambiguation | null>(null);
   const [turns, setTurns] = useState<AiChatTurn[]>([
     {
       role: 'assistant',
@@ -433,13 +244,33 @@ export function AIChatbox({
 
     let assistantReply = '';
     let matchedCodes: string[] = [];
-    let mode: 'online_ai' | 'offline_local' = 'online_ai';
+    let mode: 'online_ai' | 'offline_local' = isOnline ? 'online_ai' : 'offline_local';
 
-    if (!isOnline || window.location.protocol === 'file:') {
+    const localEngineResult = resolveChatQueryLocally(
+      question,
+      items,
+      lang,
+      paginationState,
+      pendingDisambiguation,
+      turns
+    );
+
+    setPaginationState(localEngineResult.nextPagination);
+    setPendingDisambiguation(localEngineResult.nextDisambiguation);
+
+    if (localEngineResult.handled) {
+      assistantReply = localEngineResult.reply;
+      matchedCodes = localEngineResult.matchedCodes;
+    } else if (!isOnline || window.location.protocol === 'file:') {
       mode = 'offline_local';
-      const localRes = buildOfflineLocalReply(question, items, lang);
-      assistantReply = localRes.reply;
-      matchedCodes = localRes.matchedCodes;
+      const fallback = buildNotFoundFallbackReply(
+        question,
+        items,
+        localEngineResult.detectedLang,
+        localEngineResult.extractedKeyword
+      );
+      assistantReply = fallback.reply;
+      matchedCodes = fallback.matchedCodes;
     } else {
       try {
         const res = await fetch('/api/ai-chat', {
@@ -447,7 +278,7 @@ export function AIChatbox({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: question,
-            lang,
+            lang: localEngineResult.detectedLang,
             history: historyPayload,
             catalog: compactCatalog,
           }),
@@ -461,18 +292,35 @@ export function AIChatbox({
           reply?: string;
           matchedCodes?: string[];
         };
-        assistantReply =
-          typeof data.reply === 'string' && data.reply.trim()
-            ? data.reply.trim()
-            : NOT_FOUND_MESSAGE;
-        matchedCodes = Array.isArray(data.matchedCodes)
+        const apiReply =
+          typeof data.reply === 'string' ? data.reply.trim() : '';
+        const apiCodes = Array.isArray(data.matchedCodes)
           ? data.matchedCodes
           : [];
+
+        if (!apiReply || apiReply === NOT_FOUND_MESSAGE) {
+          const fallback = buildNotFoundFallbackReply(
+            question,
+            items,
+            localEngineResult.detectedLang,
+            localEngineResult.extractedKeyword
+          );
+          assistantReply = fallback.reply;
+          matchedCodes = fallback.matchedCodes;
+        } else {
+          assistantReply = apiReply;
+          matchedCodes = apiCodes;
+        }
       } catch {
         mode = 'offline_local';
-        const localRes = buildOfflineLocalReply(question, items, lang);
-        assistantReply = localRes.reply;
-        matchedCodes = localRes.matchedCodes;
+        const fallback = buildNotFoundFallbackReply(
+          question,
+          items,
+          localEngineResult.detectedLang,
+          localEngineResult.extractedKeyword
+        );
+        assistantReply = fallback.reply;
+        matchedCodes = fallback.matchedCodes;
       }
     }
 
@@ -545,15 +393,17 @@ export function AIChatbox({
               <button
                 type="button"
                 title={L.clearTitle}
-                onClick={() =>
+                onClick={() => {
+                  setPaginationState(null);
+                  setPendingDisambiguation(null);
                   setTurns([
                     {
                       role: 'assistant',
                       content: L.resetMsg,
                       timestamp: Date.now(),
                     },
-                  ])
-                }
+                  ]);
+                }}
                 className="h-8 w-8 rounded-lg hover:bg-white/10 text-white/80 hover:text-white flex items-center justify-center"
               >
                 <Trash2 size={15} />
