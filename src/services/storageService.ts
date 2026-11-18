@@ -4,12 +4,20 @@ import {
   DEFAULT_SYSTEM_CONFIG,
   db,
   initializeLocalDatabase,
+  sortCatalogItems,
   toStoredRecord,
   type StoredFoodRecord,
 } from '../db/dexieDb';
 import type { AppendixCode, FoodItem, SystemConfig } from '../types';
 
 export type ImportMode = 'overwrite' | 'merge';
+
+export type RealtimeConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'polling'
+  | 'error';
 
 export interface ExportBackupPayload {
   schemaVersion: string;
@@ -41,7 +49,7 @@ export function getDefaultSupabaseConfigFromEnv(): SupabaseCloudConfig {
     VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || '',
     VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
     VITE_SUPABASE_TABLE:
-      import.meta.env.VITE_SUPABASE_TABLE || 'bnc_food_catalog',
+      import.meta.env.VITE_SUPABASE_TABLE || 'foods',
   };
 }
 
@@ -77,7 +85,7 @@ export async function saveCloudConfig(
     VITE_SUPABASE_URL: cfg.VITE_SUPABASE_URL.trim(),
     VITE_SUPABASE_ANON_KEY: cfg.VITE_SUPABASE_ANON_KEY.trim(),
     VITE_SUPABASE_TABLE:
-      cfg.VITE_SUPABASE_TABLE.trim() || 'bnc_food_catalog',
+      cfg.VITE_SUPABASE_TABLE.trim() || 'foods',
   };
   await db.meta.put({
     key: CLOUD_CONFIG_META_KEY,
@@ -102,7 +110,7 @@ export function getCloudSyncStatus(
       provider: 'supabase',
       configured,
       label: configured
-        ? 'Supabase REST đã cấu hình sẵn sàng'
+        ? 'Supabase Realtime & REST đã cấu hình sẵn sàng'
         : 'Supabase (chưa điền đủ URL / Anon Key / Table)',
     };
   }
@@ -114,11 +122,57 @@ export function getCloudSyncStatus(
   };
 }
 
+function cleanSupabaseBaseUrl(rawUrl: string): string {
+  return rawUrl.trim().replace(/[.\s/]+$/, '');
+}
+
+export async function testSupabaseConnection(
+  overrideCfg?: SupabaseCloudConfig
+): Promise<{ ok: boolean; message: string; keyCol?: 'code' | 'id' }> {
+  const resolved = overrideCfg || (await loadCloudConfig());
+  const status = getCloudSyncStatus(resolved);
+  if (!status.configured) {
+    return {
+      ok: false,
+      message: 'Thiếu thông số cấu hình Supabase (Provider / URL / Anon Key / Table).',
+    };
+  }
+  try {
+    const baseUrl = cleanSupabaseBaseUrl(resolved.VITE_SUPABASE_URL);
+    const anonKey = resolved.VITE_SUPABASE_ANON_KEY.trim();
+    const table = resolved.VITE_SUPABASE_TABLE.trim() || 'foods';
+    const keyCol = await detectSupabaseKeyColumn(baseUrl, anonKey, table);
+    const checkRes = await fetch(
+      `${baseUrl}/rest/v1/${encodeURIComponent(table)}?select=${keyCol},updated_at&limit=1`,
+      {
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+        },
+      }
+    );
+    if (!checkRes.ok) {
+      const detail = await extractSupabaseError(checkRes);
+      return { ok: false, message: `HTTP ${checkRes.status}: ${detail}` };
+    }
+    return {
+      ok: true,
+      keyCol,
+      message: `Kết nối thành công tới bảng "${table}" (khóa chính: ${keyCol}).`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Không kết nối được Supabase: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 export async function syncCatalogToCloud(
   items: FoodItem[],
   config: SystemConfig,
   overrideCfg?: SupabaseCloudConfig
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; syncedAt?: number }> {
   const resolved = overrideCfg || (await loadCloudConfig());
   const status = getCloudSyncStatus(resolved);
   if (!status.configured) {
@@ -137,9 +191,9 @@ export async function syncCatalogToCloud(
   }
 
   try {
-    const baseUrl = resolved.VITE_SUPABASE_URL.trim().replace(/[.\s/]+$/, '');
+    const baseUrl = cleanSupabaseBaseUrl(resolved.VITE_SUPABASE_URL);
     const anonKey = resolved.VITE_SUPABASE_ANON_KEY.trim();
-    const table = resolved.VITE_SUPABASE_TABLE.trim() || 'bnc_food_catalog';
+    const table = resolved.VITE_SUPABASE_TABLE.trim() || 'foods';
 
     const keyCol = await detectSupabaseKeyColumn(baseUrl, anonKey, table);
     const syncedAt = Date.now();
@@ -167,7 +221,8 @@ export async function syncCatalogToCloud(
     await db.meta.put({ key: 'lastCloudSyncedAt', value: String(syncedAt) });
     return {
       ok: true,
-      message: `Đã đồng bộ thành công ${items.length} mặt hàng lên Supabase (${table}).`,
+      syncedAt,
+      message: `Đã đồng bộ thành công ${items.length} mặt hàng & cấu hình lên Supabase (${table}).`,
     };
   } catch (err) {
     return {
@@ -249,9 +304,9 @@ export async function pullCatalogFromCloud(
   }
 
   try {
-    const baseUrl = resolved.VITE_SUPABASE_URL.trim().replace(/[.\s/]+$/, '');
+    const baseUrl = cleanSupabaseBaseUrl(resolved.VITE_SUPABASE_URL);
     const anonKey = resolved.VITE_SUPABASE_ANON_KEY.trim();
-    const table = resolved.VITE_SUPABASE_TABLE.trim() || 'bnc_food_catalog';
+    const table = resolved.VITE_SUPABASE_TABLE.trim() || 'foods';
 
     const keyCol = await detectSupabaseKeyColumn(baseUrl, anonKey, table);
     const res = await fetch(
@@ -299,25 +354,337 @@ export async function pullCatalogFromCloud(
   }
 }
 
+export interface SupabaseRealtimeCallbacks {
+  onStatusChange?: (state: RealtimeConnectionState) => void;
+  onRemoteUpdate: (payload: {
+    items: FoodItem[];
+    config?: SystemConfig;
+    syncedAt: number;
+  }) => void;
+}
+
+export function subscribeToSupabaseRealtime(
+  cfg: SupabaseCloudConfig,
+  callbacks: SupabaseRealtimeCallbacks
+): () => void {
+  const status = getCloudSyncStatus(cfg);
+  if (!status.configured || typeof window === 'undefined') {
+    callbacks.onStatusChange?.('disconnected');
+    return () => {};
+  }
+
+  const baseUrl = cleanSupabaseBaseUrl(cfg.VITE_SUPABASE_URL);
+  const anonKey = cfg.VITE_SUPABASE_ANON_KEY.trim();
+  const table = cfg.VITE_SUPABASE_TABLE.trim() || 'foods';
+  const wsBase = baseUrl.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:');
+  const wsUrl = `${wsBase}/realtime/v1/websocket?apikey=${encodeURIComponent(
+    anonKey
+  )}&vsn=1.0.0`;
+  const topic = `realtime:public:${table}`;
+
+  let closedByCaller = false;
+  let ws: WebSocket | null = null;
+  let heartbeatTimer: number | null = null;
+  let pollTimer: number | null = null;
+  let reconnectTimer: number | null = null;
+  let joinVerifyTimer: number | null = null;
+  let reconnectAttempts = 0;
+  let msgRef = 1;
+  let pulling = false;
+
+  const checkAndPullRemote = async () => {
+    if (closedByCaller || pulling) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    pulling = true;
+    try {
+      const lastSyncRow = await db.meta.get('lastCloudSyncedAt');
+      const localSyncedAt = Number(lastSyncRow?.value || 0);
+      const remote = await pullCatalogFromCloud(cfg);
+      if (
+        !closedByCaller &&
+        remote.ok &&
+        remote.items &&
+        remote.items.length > 0 &&
+        (remote.syncedAt || 0) > localSyncedAt
+      ) {
+        await db.meta.put({
+          key: 'lastCloudSyncedAt',
+          value: String(remote.syncedAt || Date.now()),
+        });
+        callbacks.onRemoteUpdate({
+          items: remote.items,
+          config: remote.config,
+          syncedAt: remote.syncedAt || Date.now(),
+        });
+      }
+    } catch {
+      // silent retry on next event/poll
+    } finally {
+      pulling = false;
+    }
+  };
+
+  const startFallbackPolling = (intervalMs: number) => {
+    if (pollTimer !== null) window.clearInterval(pollTimer);
+    pollTimer = window.setInterval(() => {
+      void checkAndPullRemote();
+    }, intervalMs);
+  };
+
+  const connectWs = () => {
+    if (closedByCaller) return;
+    if (typeof WebSocket === 'undefined') {
+      callbacks.onStatusChange?.('polling');
+      startFallbackPolling(12000);
+      return;
+    }
+
+    callbacks.onStatusChange?.('connecting');
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch {
+      callbacks.onStatusChange?.('polling');
+      startFallbackPolling(12000);
+      return;
+    }
+
+    const joinRef = String(msgRef++);
+    if (joinVerifyTimer !== null) window.clearTimeout(joinVerifyTimer);
+    joinVerifyTimer = window.setTimeout(() => {
+      if (!closedByCaller && ws && ws.readyState === WebSocket.OPEN) {
+        callbacks.onStatusChange?.('polling');
+      }
+    }, 6000);
+
+    ws.onopen = () => {
+      if (closedByCaller || !ws) return;
+      reconnectAttempts = 0;
+      ws.send(
+        JSON.stringify({
+          topic,
+          event: 'phx_join',
+          payload: {
+            config: {
+              broadcast: { self: false },
+              presence: { key: '' },
+              postgres_changes: [{ event: '*', schema: 'public', table }],
+            },
+          },
+          ref: joinRef,
+        })
+      );
+
+      if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = window.setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              topic: 'phoenix',
+              event: 'heartbeat',
+              payload: {},
+              ref: String(msgRef++),
+            })
+          );
+        }
+      }, 25000);
+    };
+
+    ws.onmessage = (evt) => {
+      if (closedByCaller) return;
+      try {
+        const msg = JSON.parse(String(evt.data || '{}')) as {
+          topic?: string;
+          event?: string;
+          payload?: { status?: string };
+          ref?: string;
+        };
+        if (msg.event === 'phx_reply' && msg.ref === joinRef) {
+          if (joinVerifyTimer !== null) {
+            window.clearTimeout(joinVerifyTimer);
+            joinVerifyTimer = null;
+          }
+          if (msg.payload?.status === 'ok') {
+            callbacks.onStatusChange?.('connected');
+            // Safety low-frequency background pull even when WS is connected
+            startFallbackPolling(45000);
+          } else {
+            callbacks.onStatusChange?.('polling');
+            startFallbackPolling(12000);
+          }
+        } else if (
+          msg.event === 'postgres_changes' ||
+          msg.event === 'broadcast'
+        ) {
+          void checkAndPullRemote();
+        }
+      } catch {
+        // ignore malformed frame
+      }
+    };
+
+    ws.onerror = () => {
+      if (closedByCaller) return;
+      callbacks.onStatusChange?.('polling');
+      startFallbackPolling(12000);
+    };
+
+    ws.onclose = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (joinVerifyTimer !== null) {
+        window.clearTimeout(joinVerifyTimer);
+        joinVerifyTimer = null;
+      }
+      if (closedByCaller) return;
+      callbacks.onStatusChange?.('polling');
+      startFallbackPolling(12000);
+      reconnectAttempts += 1;
+      const delay = Math.min(30000, 4000 * Math.pow(1.5, reconnectAttempts - 1));
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = window.setTimeout(() => {
+        connectWs();
+      }, delay);
+    };
+  };
+
+  const handleFocusOrVisible = () => {
+    if (document.visibilityState === 'visible') {
+      void checkAndPullRemote();
+    }
+  };
+
+  window.addEventListener('focus', handleFocusOrVisible);
+  document.addEventListener('visibilitychange', handleFocusOrVisible);
+  connectWs();
+
+  return () => {
+    closedByCaller = true;
+    window.removeEventListener('focus', handleFocusOrVisible);
+    document.removeEventListener('visibilitychange', handleFocusOrVisible);
+    if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+    if (pollTimer !== null) window.clearInterval(pollTimer);
+    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    if (joinVerifyTimer !== null) window.clearTimeout(joinVerifyTimer);
+    try {
+      ws?.close();
+    } catch {
+      // ignore close errors
+    }
+  };
+}
+
 export async function upsertFoodItemInDb(item: FoodItem): Promise<FoodItem[]> {
   await initializeLocalDatabase();
   const record: StoredFoodRecord = {
     ...toStoredRecord(item),
+    order: item.order ?? item.n,
     isCustom: true,
     updatedAt: Date.now(),
   };
   await db.items.put(record);
   const rows = await db.items.toArray();
-  rows.sort((a, b) => (a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1));
-  return rows;
+  return sortCatalogItems(rows);
 }
 
 export async function deleteFoodItemInDb(code: string): Promise<FoodItem[]> {
   await initializeLocalDatabase();
   await db.items.delete(code);
   const rows = await db.items.toArray();
-  rows.sort((a, b) => (a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1));
-  return rows;
+  return sortCatalogItems(rows);
+}
+
+export async function saveOrderedItemsInDb(
+  orderedItems: FoodItem[]
+): Promise<FoodItem[]> {
+  await initializeLocalDatabase();
+  const now = Date.now();
+  const records: StoredFoodRecord[] = orderedItems.map((it, idx) => ({
+    ...toStoredRecord(it),
+    order: idx + 1,
+    isCustom: true,
+    updatedAt: now,
+  }));
+  await db.items.bulkPut(records);
+  return sortCatalogItems(records);
+}
+
+export async function duplicateFoodItemInDb(
+  sourceItem: FoodItem
+): Promise<{ items: FoodItem[]; createdCode: string }> {
+  await initializeLocalDatabase();
+  const currentRows = sortCatalogItems(await db.items.toArray());
+  const maxN = currentRows.reduce((m, it) => Math.max(m, it.n), 0);
+  const newN = maxN + 1;
+  const copyName = `${sourceItem.name} (Bản sao)`;
+  const createdItem: FoodItem = {
+    ...sourceItem,
+    n: newN,
+    name: copyName,
+    customFields: sourceItem.customFields ? { ...sourceItem.customFields } : undefined,
+    isCustom: true,
+    updatedAt: Date.now(),
+  };
+
+  const srcCode = getItemCode(sourceItem);
+  const idx = currentRows.findIndex((r) => getItemCode(r) === srcCode);
+  const nextList = [...currentRows];
+  if (idx >= 0) nextList.splice(idx + 1, 0, createdItem);
+  else nextList.push(createdItem);
+
+  const saved = await saveOrderedItemsInDb(nextList);
+  return { items: saved, createdCode: getItemCode(createdItem) };
+}
+
+export async function bulkDeleteItemsInDb(codes: string[]): Promise<FoodItem[]> {
+  await initializeLocalDatabase();
+  if (codes.length > 0) {
+    await db.items.bulkDelete(codes);
+  }
+  const rows = await db.items.toArray();
+  return sortCatalogItems(rows);
+}
+
+export async function bulkMoveGroupInDb(
+  codes: string[],
+  targetGroup: string
+): Promise<FoodItem[]> {
+  await initializeLocalDatabase();
+  const cleanGroup = targetGroup.trim();
+  if (!cleanGroup || codes.length === 0) {
+    return sortCatalogItems(await db.items.toArray());
+  }
+  const targetSet = new Set(codes.map((c) => c.toUpperCase()));
+  const rows = await db.items.toArray();
+  const now = Date.now();
+  const updates = rows
+    .filter((r) => targetSet.has(r.code.toUpperCase()))
+    .map((r) => ({ ...r, g: cleanGroup, isCustom: true, updatedAt: now }));
+  if (updates.length > 0) {
+    await db.items.bulkPut(updates);
+  }
+  return sortCatalogItems(await db.items.toArray());
+}
+
+export async function renameGroupInDb(
+  oldGroup: string,
+  newGroup: string
+): Promise<FoodItem[]> {
+  await initializeLocalDatabase();
+  const cleanNew = newGroup.trim();
+  if (!oldGroup || !cleanNew || oldGroup === cleanNew) {
+    return sortCatalogItems(await db.items.toArray());
+  }
+  const rows = await db.items.toArray();
+  const now = Date.now();
+  const updates = rows
+    .filter((r) => r.g === oldGroup)
+    .map((r) => ({ ...r, g: cleanNew, isCustom: true, updatedAt: now }));
+  if (updates.length > 0) {
+    await db.items.bulkPut(updates);
+  }
+  return sortCatalogItems(await db.items.toArray());
 }
 
 export async function resetCatalogToDefaultBaseline(): Promise<FoodItem[]> {
@@ -341,7 +708,7 @@ function triggerDownload(blob: Blob, filename: string) {
 
 export function exportCatalogToJson(items: FoodItem[], config: SystemConfig) {
   const payload: ExportBackupPayload = {
-    schemaVersion: 'bnc-food-backup-v1',
+    schemaVersion: 'she-fb13-backup-v2',
     exportedAt: new Date().toISOString(),
     itemCount: items.length,
     config,
@@ -351,30 +718,35 @@ export function exportCatalogToJson(items: FoodItem[], config: SystemConfig) {
     type: 'application/json;charset=utf-8',
   });
   const dateTag = new Date().toISOString().slice(0, 10);
-  triggerDownload(blob, `bnc-food-backup-${dateTag}.json`);
+  triggerDownload(blob, `she-fb13-backup-${dateTag}.json`);
 }
 
 function toFlatRow(item: FoodItem) {
-  return {
+  const base: Record<string, string | number> = {
     Ma_So: getItemCode(item),
-    Phu_Luc: item.a,
+    Quy_Dinh: item.a,
     STT: item.n,
-    Nhom_Hang: item.g,
-    Ten_San_Pham: item.name,
+    Thu_Tu: item.order ?? item.n,
+    Nhom_Thuc_Pham: item.g,
+    Loai_Cu_The: item.name,
     Ten_Tieng_Anh: item.enName || '',
-    Khoi_Luong: item.weight || '',
-    Nhiet_Do_Phong: item.room,
-    Kho_Mat_1_4C: item.cool,
-    Kho_Dong_18C: item.freeze,
-    Trung_Bay_Lanh: item.displayCool || '',
-    Trung_Bay_Nong: item.displayHot || '',
+    Phong_15_25C: item.room,
+    Lanh_0_5C: item.cool,
+    Dong_Am_18C: item.freeze,
+    Luu_Y_Bao_Quan: item.note,
     Nhiet_Do_Chuan: item.standardTemp || '',
     HSD_Chua_Mo_Bao_Bi: item.shelfLifeUnopened || '',
     HSD_Sau_Mo_Bao_Bi: item.shelfLifeOpened || '',
     Quy_Cach_Bao_Quan: item.packagingSpec || '',
-    Ghi_Chu_Goc: item.note,
     Ghi_Chu_HACCP_QA: item.haccpNote || item.flag || '',
+    Tu_Khoa: (item.keywords || []).join(', '),
   };
+  if (item.customFields) {
+    for (const [k, v] of Object.entries(item.customFields)) {
+      base[`Col_${k}`] = v;
+    }
+  }
+  return base;
 }
 
 export function exportCatalogToCsv(items: FoodItem[]) {
@@ -383,27 +755,24 @@ export function exportCatalogToCsv(items: FoodItem[]) {
   const csvContent = '\uFEFF' + XLSX.utils.sheet_to_csv(worksheet);
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
   const dateTag = new Date().toISOString().slice(0, 10);
-  triggerDownload(blob, `bnc-food-report-${dateTag}.csv`);
+  triggerDownload(blob, `she-fb13-report-${dateTag}.csv`);
 }
 
 export function exportCatalogToXlsx(items: FoodItem[]) {
   const rows = items.map(toFlatRow);
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'BNC_ShelfLife');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'SHE_QD_FB13');
   const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
   const dateTag = new Date().toISOString().slice(0, 10);
-  triggerDownload(blob, `bnc-food-report-${dateTag}.xlsx`);
+  triggerDownload(blob, `she-fb13-report-${dateTag}.xlsx`);
 }
 
-function normalizeAppendixCode(raw: unknown): AppendixCode {
-  const s = String(raw || '').trim().toUpperCase();
-  if (s === 'PL2' || s.startsWith('PL2')) return 'PL2';
-  if (s === 'PL3' || s.startsWith('PL3')) return 'PL3';
-  return 'PL1';
+function normalizeAppendixCode(_raw: unknown): AppendixCode {
+  return 'SHE';
 }
 
 function parseNumberFromCodeOrField(rawNo: unknown, rawCode: unknown, fallback: number): number {
@@ -419,34 +788,69 @@ function normalizeImportedRow(
   fallbackIndex: number
 ): FoodItem | null {
   const name = String(
-    raw.name ?? raw.Ten_San_Pham ?? raw['Tên sản phẩm'] ?? ''
+    raw.name ??
+      raw.Loai_Cu_The ??
+      raw.Ten_San_Pham ??
+      raw['Loại cụ thể'] ??
+      raw['Tên sản phẩm'] ??
+      ''
   ).trim();
   if (!name) return null;
 
   const codeRaw = raw.code ?? raw.Ma_So ?? raw['Mã số'] ?? '';
-  const a = normalizeAppendixCode(raw.a ?? raw.Phu_Luc ?? codeRaw);
+  const a = normalizeAppendixCode(raw.a ?? raw.Quy_Dinh ?? codeRaw);
   const n = parseNumberFromCodeOrField(
     raw.n ?? raw.STT,
     codeRaw,
     fallbackIndex + 1
   );
+  const rawOrder = Number(raw.order ?? raw.Thu_Tu);
+  const order = Number.isFinite(rawOrder) && rawOrder > 0 ? rawOrder : n;
+
+  const kwRaw = raw.keywords ?? raw.Tu_Khoa;
+  const keywords = Array.isArray(kwRaw)
+    ? kwRaw.map((x) => String(x).trim()).filter(Boolean)
+    : typeof kwRaw === 'string' && kwRaw.trim()
+      ? kwRaw
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean)
+      : undefined;
+
+  const customFields: Record<string, string> =
+    raw.customFields && typeof raw.customFields === 'object'
+      ? { ...(raw.customFields as Record<string, string>) }
+      : {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (key.startsWith('Col_') && val !== undefined && val !== null) {
+      customFields[key.slice(4)] = String(val);
+    }
+  }
 
   return {
     a,
     n,
+    order,
     g:
-      String(raw.g ?? raw.Nhom_Hang ?? raw['Nhóm hàng'] ?? 'Khác').trim() ||
-      'Khác',
+      String(
+        raw.g ??
+          raw.Nhom_Thuc_Pham ??
+          raw.Nhom_Hang ??
+          raw['Nhóm thực phẩm'] ??
+          raw['Nhóm hàng'] ??
+          'Khác'
+      ).trim() || 'Khác',
     name,
     enName: String(raw.enName ?? raw.Ten_Tieng_Anh ?? '').trim() || undefined,
-    weight: String(raw.weight ?? raw.Khoi_Luong ?? '').trim() || undefined,
-    room: String(raw.room ?? raw.Nhiet_Do_Phong ?? '—').trim() || '—',
-    cool: String(raw.cool ?? raw.Kho_Mat_1_4C ?? '—').trim() || '—',
-    freeze: String(raw.freeze ?? raw.Kho_Dong_18C ?? '—').trim() || '—',
-    displayCool:
-      String(raw.displayCool ?? raw.Trung_Bay_Lanh ?? '').trim() || undefined,
-    displayHot:
-      String(raw.displayHot ?? raw.Trung_Bay_Nong ?? '').trim() || undefined,
+    room:
+      String(raw.room ?? raw.Phong_15_25C ?? raw.Nhiet_Do_Phong ?? '—').trim() ||
+      '—',
+    cool:
+      String(raw.cool ?? raw.Lanh_0_5C ?? raw.Kho_Mat_1_4C ?? '—').trim() ||
+      '—',
+    freeze:
+      String(raw.freeze ?? raw.Dong_Am_18C ?? raw.Kho_Dong_18C ?? '—').trim() ||
+      '—',
     standardTemp:
       String(raw.standardTemp ?? raw.Nhiet_Do_Chuan ?? '').trim() || undefined,
     shelfLifeUnopened:
@@ -458,10 +862,14 @@ function normalizeImportedRow(
     packagingSpec:
       String(raw.packagingSpec ?? raw.Quy_Cach_Bao_Quan ?? '').trim() ||
       undefined,
-    note: String(raw.note ?? raw.Ghi_Chu_Goc ?? '—').trim() || '—',
+    note:
+      String(raw.note ?? raw.Luu_Y_Bao_Quan ?? raw.Ghi_Chu_Goc ?? '—').trim() ||
+      '—',
     flag: String(raw.flag ?? '').trim(),
     haccpNote:
       String(raw.haccpNote ?? raw.Ghi_Chu_HACCP_QA ?? '').trim() || undefined,
+    keywords,
+    customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
     isCustom: true,
     updatedAt: Date.now(),
   };
@@ -532,6 +940,7 @@ export async function applyImportedItemsToDb(
   await initializeLocalDatabase();
   const records = importedItems.map((it) => ({
     ...toStoredRecord(it),
+    order: it.order ?? it.n,
     isCustom: true,
     updatedAt: Date.now(),
   }));
@@ -547,6 +956,5 @@ export async function applyImportedItemsToDb(
   }
 
   const all = await db.items.toArray();
-  all.sort((a, b) => (a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1));
-  return all;
+  return sortCatalogItems(all);
 }

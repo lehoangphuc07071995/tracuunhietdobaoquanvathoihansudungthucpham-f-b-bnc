@@ -1,45 +1,29 @@
 export type Lang = 'VI' | 'EN' | 'KO' | 'HI';
-export type AppendixCode = 'PL1' | 'PL2' | 'PL3';
-export type AppendixFilter = 'ALL' | AppendixCode;
+export type AppendixCode = 'SHE';
+export type MainWorkspaceTab = 'table' | 'nofreeze' | 'rules';
 export type StorageFilter = 'all' | 'room' | 'cool' | 'freeze';
 export type SortOption = 'no' | 'name';
 export type ViewMode = 'grid' | 'list';
 
-export interface RawCvItem {
-  a: 'PL1' | 'PL2';
-  g: string;
-  n: number;
-  name: string;
-  room: string;
-  cool: string;
-  freeze: string;
-  note: string;
-  flag: string;
+export interface CustomColumnDef {
+  id: string;
+  label: string;
+  visible: boolean;
+  order: number;
 }
-
-export type Pl3Tuple = [
-  number,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-  string,
-];
 
 export interface FoodItem {
   a: AppendixCode;
   g: string;
   n: number;
+  order?: number;
   name: string;
   room: string;
   cool: string;
   freeze: string;
   note: string;
   flag: string;
+  keywords?: string[];
   enName?: string;
   weight?: string;
   displayCool?: string;
@@ -50,6 +34,7 @@ export interface FoodItem {
   shelfLifeOpened?: string;
   packagingSpec?: string;
   haccpNote?: string;
+  customFields?: Record<string, string>;
   isCustom?: boolean;
   updatedAt?: number;
 }
@@ -64,6 +49,11 @@ export interface SystemConfig {
   bannerImageUrl: string;
   alertBannerText: string;
   alertBannerEnabled: boolean;
+  appLocked?: boolean;
+  appLockMessage?: string;
+  appLockPin?: string;
+  customColumns?: CustomColumnDef[];
+  autoSyncCloud?: boolean;
   updatedAt: number;
 }
 
@@ -72,7 +62,9 @@ export type AdminPermission =
   | 'edit_items'
   | 'delete_items'
   | 'view_export_reports'
-  | 'import_data';
+  | 'import_data'
+  | 'lock_app'
+  | 'manage_cloud';
 
 export type AdminRole = 'super_admin' | 'sub_admin';
 
@@ -83,6 +75,7 @@ export interface AdminUser {
   role: AdminRole;
   permissions: AdminPermission[];
   allowedGroups: string[]; // ['ALL'] or specific food group names
+  disabled?: boolean;
   createdAt: number;
 }
 
@@ -126,20 +119,20 @@ export interface UiTranslation {
   pageTitle: string;
   searchPlaceholder: string;
   all: string;
-  appendix1: string;
-  appendix2: string;
-  appendix3: string;
+  appendixLabel: string;
+  tabTable: string;
+  tabNoFreeze: string;
+  tabRules: string;
   filterGroup: string;
   filterStorage: string;
+  hasRoom: string;
+  hasCool: string;
+  hasFreeze: string;
   sort: string;
   sortId: string;
   sortName: string;
   viewGrid: string;
   viewList: string;
-  hasRoom: string;
-  hasCool: string;
-  hasFreeze: string;
-  results: string;
   colRoom: string;
   colCool: string;
   colFreeze: string;
@@ -149,7 +142,7 @@ export interface UiTranslation {
   colDisplayCool: string;
   colDisplayHot: string;
   colEnglish: string;
-  sourcePL3: string;
+  sourceDoc: string;
   noteLabel: string;
   emptyNote: string;
   emptyCell: string;
@@ -159,6 +152,7 @@ export interface UiTranslation {
   noResultTitle: string;
   noResultDesc: string;
   resetFilter: string;
+  results: string;
   principle: string;
   detailTitle: string;
   close: string;
@@ -175,4 +169,6 @@ export interface UiTranslation {
   clearLabel: string;
   qaTitle: string;
   excerptLabel: string;
+  noFreezeBadge: string;
+  tableReadingTitle: string;
 }

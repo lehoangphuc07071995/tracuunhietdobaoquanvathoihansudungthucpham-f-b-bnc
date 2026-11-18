@@ -1,164 +1,228 @@
-import { getItemCode, hasCellValue, hasUseToday, isEmptyCell } from '../data/foodData';
-import { translateGroup, translateItemName, translateItemNote } from '../data/translations';
+import {
+  getItemCode,
+  hasCellValue,
+  hasUseToday,
+  isEmptyCell,
+  isNoFreezeCell,
+} from '../data/foodData';
+import {
+  translateGroup,
+  translateItemName,
+  translateItemNote,
+} from '../data/translations';
 import type { FoodItem, Lang } from '../types';
 
 const COMPOUND_REPLACEMENTS: Array<[RegExp, string]> = [
   [/so\s*co\s*la|sô\s*cô\s*la/g, 'socola'],
   [/pho\s*mai/g, 'phomai'],
   [/banh\s*m[iy]/g, 'banhmi'],
+  [/banh\s*bao/g, 'banhbao'],
+  [/banh\s*kem/g, 'banhkem'],
+  [/banh\s*ngot/g, 'banhngot'],
+  [/banh\s*quy/g, 'banhquy'],
+  [/banh\s*cuon/g, 'banhcuon'],
+  [/ha\s*cao/g, 'hacao'],
   [/ca\s*phe/g, 'caphe'],
-  [/tra\s*sua/g, 'trasua'],
   [/ca\s*hoi/g, 'cahoi'],
   [/thit\s*bo/g, 'thitbo'],
   [/thit\s*heo/g, 'thitheo'],
   [/thit\s*ga/g, 'thitga'],
+  [/thit\s*xay/g, 'thitxay'],
+  [/gia\s*cam/g, 'giacam'],
   [/hai\s*san/g, 'haisan'],
   [/thuy\s*san/g, 'thuysan'],
-  [/ruou\s*vang/g, 'ruouvang'],
-  [/dau\s*hu/g, 'dauhu'],
+  [/gio\s*cha/g, 'giocha'],
+  [/cha\s*lua/g, 'chalua'],
+  [/dau\s*hu|dau\s*phu/g, 'dauhu'],
   [/sua\s*tuoi/g, 'suatuoi'],
+  [/sua\s*dac/g, 'suadac'],
+  [/sua\s*chua/g, 'suachua'],
   [/kem\s*tuoi/g, 'kemtuoi'],
-  [/banh\s*ngot/g, 'banhngot'],
-  [/banh\s*quy/g, 'banhquy'],
-  [/banh\s*can/g, 'banhcan'],
-  [/banh\s*man/g, 'banhman'],
-  [/sung\s*bo/g, 'sungbo'],
+  [/long\s*do/g, 'longdo'],
+  [/long\s*trang/g, 'longtrang'],
   [/trai\s*cay/g, 'traicay'],
-  [/nho\s*kho/g, 'nhokho'],
-  [/nhiet\s*do\s*phong/g, 'nhietdophong'],
-  [/trong\s*ngay/g, 'trongngay'],
+  [/rau\s*cu/g, 'raucu'],
+  [/khoai\s*tay/g, 'khoaitay'],
+  [/com\s*trang/g, 'comtrang'],
+  [/nuoc\s*cot\s*dua|cot\s*dua/g, 'cotdua'],
+  [/nuoc\s*ep/g, 'nuocep'],
+  [/nuoc\s*mam/g, 'nuocmam'],
+  [/nuoc\s*tuong/g, 'nuoctuong'],
+  [/dau\s*an/g, 'dauan'],
+  [/bap\s*rang\s*bo/g, 'baprangbo'],
+  [/yen\s*mach/g, 'yenmach'],
+  [/nhiet\s*do\s*phong|15\s*[-–]\s*25/g, 'nhietdophong'],
+  [/nhiet\s*do\s*lanh|tu\s*mat|kho\s*mat|kho\s*lanh|tu\s*lanh|0\s*[-–]\s*5/g, 'kholanh'],
+  [/khong\s*cap\s*dong/g, 'khongcapdong'],
+  [/nhiet\s*do\s*dong|cap\s*dong|kho\s*dong|tu\s*dong|-?\s*18/g, 'khodong'],
+  [/trong\s*ngay|theo\s*gio/g, 'trongngay'],
   [/ra\s*dong/g, 'radong'],
-  [/cap\s*dong|kho\s*dong|tu\s*dong/g, 'khodong'],
-  [/tu\s*mat|kho\s*mat|kho\s*lanh|tu\s*lanh/g, 'kholanh'],
-  [/trung\s*bay\s*nong/g, 'trungbaynong'],
-  [/trung\s*bay\s*lanh/g, 'trungbaylanh'],
   [/hut\s*chan\s*khong/g, 'hutchankhong'],
+  [/\b(?:unsalted|salted|melted)\s*butter\b/g, 'butter'],
+  [/\bbo\s*(?:lat|man|nhat|thuc\s*vat|anchor|president)\b/g, 'bo'],
 ];
 
 const SEARCH_SYNONYMS: Record<string, string> = {
-  // Chocolate / Cocoa
-  chocolate: 'socola',
-  chocolat: 'socola',
-  cacao: 'socola',
-  cocoa: 'socola',
-  choco: 'socola',
-  // Dairy & Cheese
+  // Dairy & Egg
   cheese: 'phomai',
   mascarpone: 'phomai',
   cheddar: 'phomai',
   mozzarella: 'phomai',
-  mozzarela: 'phomai',
   parmesan: 'phomai',
+  brie: 'phomai',
+  feta: 'phomai',
+  gouda: 'phomai',
+  camembert: 'phomai',
+  ricotta: 'phomai',
   creamcheese: 'phomai',
   butter: 'bo',
+  margarine: 'bo',
   whipping: 'kem',
   cream: 'kem',
+  gelato: 'kem',
+  sorbet: 'kem',
+  icecream: 'kem',
   milk: 'sua',
   yogurt: 'suachua',
   yoghurt: 'suachua',
   egg: 'trung',
   eggs: 'trung',
-  // Coffee / Tea / Drinks
-  cafe: 'caphe',
-  coffee: 'caphe',
-  espresso: 'caphe',
-  tea: 'tra',
-  matcha: 'tra',
-  oolong: 'tra',
-  wine: 'ruou',
-  alcohol: 'ruou',
-  liquor: 'ruou',
-  spirits: 'ruou',
-  liqueur: 'ruou',
-  syrup: 'siro',
-  puree: 'sinhto',
-  juice: 'nuocep',
-  // Tofu & Meat & Seafood
-  tofu: 'dauhu',
-  beef: 'thitbo',
-  wagyu: 'thitbo',
-  steak: 'thitbo',
-  tenderloin: 'thitbo',
-  ribeye: 'thitbo',
-  pork: 'thitheo',
-  bacon: 'thitheo',
-  ham: 'thitheo',
-  sausage: 'xucxich',
-  chicken: 'thitga',
-  poultry: 'giacam',
-  duck: 'vit',
-  salmon: 'cahoi',
-  shrimp: 'tom',
-  prawn: 'tom',
-  prawns: 'tom',
-  seafood: 'haisan',
-  fish: 'ca',
-  squid: 'muc',
-  octopus: 'bachtuoc',
-  crab: 'cua',
-  oyster: 'hau',
-  // Bakery & Pastry
+  // Chocolate / Bakery / Flour
+  chocolate: 'socola',
+  cocoa: 'socola',
+  cacao: 'socola',
   bread: 'banhmi',
   baguette: 'banhmi',
   sandwich: 'banhmi',
-  ciabatta: 'banhmi',
-  toast: 'banhmi',
-  croissant: 'sungbo',
-  danish: 'banhcan',
-  viennoiserie: 'banhcan',
-  brioche: 'banhcan',
-  cake: 'banhngot',
+  sourdough: 'banhmi',
+  focaccia: 'banhmi',
+  brioche: 'banhmi',
+  bagel: 'banhmi',
+  danish: 'banhmi',
   pastry: 'banhngot',
-  pastries: 'banhngot',
-  tiramisu: 'banhngot',
+  cake: 'banhngot',
   mousse: 'banhngot',
-  cheesecake: 'banhngot',
+  tiramisu: 'banhngot',
+  muffin: 'banhngot',
   brownie: 'banhngot',
-  eclair: 'banhngot',
-  tart: 'banhngot',
-  macaron: 'macaron',
+  macaron: 'banhngot',
+  flan: 'banhngot',
+  pudding: 'banhngot',
   cookie: 'banhquy',
   biscuit: 'banhquy',
-  biscuits: 'banhquy',
-  icecream: 'kem',
-  gelato: 'kem',
-  sorbet: 'kem',
-  savory: 'banhman',
-  quiche: 'banhman',
-  pie: 'banhman',
-  // Sauces & Flavors
-  sauce: 'sot',
-  mayonnaise: 'mayonnaise',
-  mayo: 'mayonnaise',
-  mustard: 'mutat',
-  vanilla: 'vani',
-  strawberry: 'dau',
+  flour: 'bot',
+  cereal: 'ngucoc',
+  oats: 'yenmach',
+  popcorn: 'baprangbo',
+  // Meat / Poultry / Seafood
+  beef: 'thitbo',
+  lamb: 'cuu',
+  pork: 'thitheo',
+  bacon: 'thitheo',
+  ham: 'jambon',
+  jambon: 'jambon',
+  sausage: 'xucxich',
+  chicken: 'thitga',
+  duck: 'vit',
+  poultry: 'giacam',
+  salmon: 'cahoi',
+  fish: 'ca',
+  shrimp: 'tom',
+  prawn: 'tom',
+  seafood: 'haisan',
+  shellfish: 'nhuyenthe',
+  oyster: 'hau',
+  sashimi: 'sashimi',
+  sushi: 'sushi',
+  // Produce / Rice / Noodles / Dry / Condiments / Beverages
+  vegetable: 'raucu',
+  vegetables: 'raucu',
+  lettuce: 'xalach',
+  cucumber: 'dualeo',
+  tomato: 'cachua',
+  onion: 'hanhtay',
+  garlic: 'toi',
+  herb: 'rauthom',
+  herbs: 'rauthom',
+  salad: 'xalach',
+  fruit: 'traicay',
+  fruits: 'traicay',
+  pineapple: 'dua',
   mango: 'xoai',
-  blueberry: 'vietquat',
-  raspberry: 'phucbontu',
-  passionfruit: 'chanhday',
-  fig: 'sung',
-  raisin: 'nhokho',
-  raisins: 'nhokho',
-  // Storage & Hygiene
+  apple: 'tao',
+  orange: 'cam',
+  lemon: 'chanh',
+  strawberry: 'dautay',
+  potato: 'khoaitay',
+  rice: 'com',
+  sticky: 'xoi',
+  porridge: 'chao',
+  noodle: 'mi',
+  noodles: 'mi',
+  pasta: 'mi',
+  vermicelli: 'bun',
+  pho: 'pho',
+  tofu: 'dauhu',
+  juice: 'nuocep',
+  smoothie: 'sinhto',
+  syrup: 'siro',
+  jam: 'mut',
+  coffee: 'caphe',
+  espresso: 'caphe',
+  latte: 'caphe',
+  americano: 'caphe',
+  coldbrew: 'caphe',
+  tea: 'tra',
+  beer: 'bia',
+  wine: 'ruou',
+  soda: 'nuocngot',
+  sauce: 'sot',
+  broth: 'nuocdung',
+  stock: 'nuocdung',
+  soup: 'sup',
+  mayo: 'mayonnaise',
+  mayonnaise: 'mayonnaise',
+  mayonaise: 'mayonnaise',
+  mustard: 'mutat',
+  ketchup: 'tuongca',
+  vinegar: 'giam',
+  sugar: 'duong',
+  salt: 'muoi',
+  pepper: 'tieu',
+  oil: 'dauan',
+  spice: 'giavi',
+  spices: 'giavi',
+  honey: 'matong',
+  coconut: 'cotdua',
+  kimchi: 'kimchi',
+  squid: 'muc',
+  crab: 'cua',
+  octopus: 'bachuot',
+  croissant: 'banhsungbo',
+  custard: 'kemtrung',
+  // Storage conditions
   frozen: 'khodong',
   freeze: 'khodong',
   freezer: 'khodong',
+  nofreeze: 'khongcapdong',
   chilled: 'kholanh',
   chill: 'kholanh',
   fridge: 'kholanh',
   cooler: 'kholanh',
   ambient: 'nhietdophong',
   room: 'nhietdophong',
-  thaw: 'radong',
-  thawing: 'radong',
+  today: 'trongngay',
   defrost: 'radong',
+  thaw: 'radong',
+  thawed: 'radong',
+  reheat: 'hamnong',
+  cooling: 'lamnguoi',
   vacuum: 'hutchankhong',
-  conflict: 'qa',
 };
 
 export function normalizeText(s: string): string {
   let out = s
+    .replace(/(^|[^\p{L}])m[ỳýỷỹỵ](?=$|[^\p{L}])/gu, '$1mi')
     .normalize('NFD')
     .replace(/[\u0300-\u036F]/g, '')
     .replace(/đ/g, 'd')
@@ -171,6 +235,24 @@ export function normalizeText(s: string): string {
 }
 
 const SYNONYM_KEYS = Object.keys(SEARCH_SYNONYMS);
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
 
 function resolveSynonym(word: string): string {
   if (SEARCH_SYNONYMS[word]) return SEARCH_SYNONYMS[word];
@@ -210,33 +292,15 @@ function tokenizeTarget(normalized: string): string[] {
   return expanded;
 }
 
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  const m = a.length;
-  const n = b.length;
-  if (!m) return n;
-  if (!n) return m;
-  let prev = Array.from({ length: n + 1 }, (_, i) => i);
-  for (let i = 1; i <= m; i++) {
-    const cur = [i];
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-    }
-    prev = cur;
-  }
-  return prev[n];
-}
-
 function scoreTokenAgainst(qt: string, tokens: string[]): number {
   let best = 0;
   for (const tk of tokens) {
     if (tk === qt) best = Math.max(best, 100);
-    else if (tk.indexOf(qt) === 0 && qt.length >= 2) best = Math.max(best, 88);
+    else if (tk.indexOf(qt) === 0 && qt.length >= 3) best = Math.max(best, 88);
     else if (tk.includes(qt) && qt.length >= 3) best = Math.max(best, 72);
     else if (
-      qt.length >= 5 &&
-      tk.length >= 5 &&
+      qt.length >= 4 &&
+      tk.length >= 4 &&
       tk[0] === qt[0] &&
       levenshtein(qt, tk) <= (qt.length >= 7 ? 2 : 1)
     ) {
@@ -244,6 +308,14 @@ function scoreTokenAgainst(qt: string, tokens: string[]): number {
     }
   }
   return best;
+}
+
+function hasUnicodeWord(raw: string, wordWithAccent: string): boolean {
+  try {
+    return new RegExp(`(^|[^\\p{L}])${wordWithAccent}(?=$|[^\\p{L}])`, 'iu').test(raw);
+  } catch {
+    return raw.toLowerCase().includes(wordWithAccent.toLowerCase());
+  }
 }
 
 export interface SmartSearchOptions {
@@ -266,55 +338,86 @@ export function runSmartSearch({
   const queryTokens = tokenizeQuery(qNorm);
   const compactQ = q.toUpperCase().replace(/\s+/g, '');
 
+  const hasButterAccent = hasUnicodeWord(q, 'bơ');
+  const hasBeefAccent = hasUnicodeWord(q, 'bò');
+  const hasPineappleAccent = hasUnicodeWord(q, 'dứa');
+  const hasCoconutAccent = hasUnicodeWord(q, 'dừa');
+
   // AI rank map (earlier in array = higher relevance)
   const aiRankMap = new Map<string, number>();
   aiMatchedCodes.forEach((code, idx) => {
     aiRankMap.set(code.toUpperCase(), idx);
   });
 
-  // Detect explicit hygiene/storage intents in the query
+  // Detect explicit SHE storage intents
   const wantsUseToday =
-    qNorm.includes('trongngay') || qNorm.includes('today') || qNorm.includes('sameday');
-  const wantsQa =
-    qNorm.includes('qa') || qNorm.includes('mauthuan') || qNorm.includes('xacnhan');
-  const wantsHotDisplay =
-    qNorm.includes('trungbaynong') || qNorm.includes('hotdisplay') || qNorm.includes('30-40');
-  const wantsColdDisplay =
-    qNorm.includes('trungbaylanh') || qNorm.includes('colddisplay');
-  const wantsFreeze =
-    qNorm.includes('khodong') || qNorm.includes('-18');
-  const wantsCool =
-    qNorm.includes('kholanh') || qNorm.includes('1-4') || qNorm.includes('0-4');
+    qNorm.includes('trongngay') || qNorm.includes('today') || qNorm.includes('8gio') || qNorm.includes('4gio');
+  const wantsNoFreeze =
+    qNorm.includes('khongcapdong') || qNorm.includes('khongduoccapdong');
+  const wantsFreeze = !wantsNoFreeze && qNorm.includes('khodong');
+  const wantsCool = qNorm.includes('kholanh');
   const wantsRoom = qNorm.includes('nhietdophong');
 
   const scored: Array<{ item: FoodItem; score: number; len: number }> = [];
+  const headFallbackScored: Array<{ item: FoodItem; score: number; len: number }> = [];
 
   for (const item of items) {
     const code = getItemCode(item);
     const displayName = translateItemName(item, lang);
     const aiRank = aiRankMap.get(code.toUpperCase());
 
-    // 1. Direct Item Code Match (e.g. "PL1-65", "PL3 02", "65")
+    const rawTextPool = `${item.name} ${item.g} ${(item.keywords || []).join(' ')}`;
+    if (hasButterAccent && !hasBeefAccent && hasUnicodeWord(rawTextPool, 'bò') && !hasUnicodeWord(rawTextPool, 'bơ')) {
+      continue;
+    }
+    if (hasBeefAccent && !hasButterAccent && hasUnicodeWord(rawTextPool, 'bơ') && !hasUnicodeWord(rawTextPool, 'bò')) {
+      continue;
+    }
+    if (hasPineappleAccent && !hasCoconutAccent && hasUnicodeWord(rawTextPool, 'dừa') && !hasUnicodeWord(rawTextPool, 'dứa')) {
+      continue;
+    }
+    if (hasCoconutAccent && !hasPineappleAccent && hasUnicodeWord(rawTextPool, 'dứa') && !hasUnicodeWord(rawTextPool, 'dừa')) {
+      continue;
+    }
+
+    // 1. Direct SHE Item Code Match (e.g. "SHE-23", "SHE 23", "23")
     const normalizedCode = code.toUpperCase();
-    const numericMatch = /^\d{1,2}$/.test(compactQ) && String(item.n) === String(Number(compactQ));
+    const compactSheNoDash = normalizedCode.replace('-', '');
+    const numericMatch =
+      /^\d{1,2}$/.test(compactQ) && String(item.n) === String(Number(compactQ));
     if (
       normalizedCode === compactQ ||
-      normalizedCode.replace('-', '') === compactQ.replace('-', '') ||
+      compactSheNoDash === compactQ.replace('-', '') ||
       numericMatch
     ) {
       scored.push({
         item,
-        score: normalizedCode.replace('-', '') === compactQ.replace('-', '') ? 300 : 185,
+        score:
+          normalizedCode === compactQ ||
+          compactSheNoDash === compactQ.replace('-', '')
+            ? 300
+            : 185,
         len: displayName.length,
       });
       continue;
     }
 
-    // 2. Bilingual Name + English Name + Localized Name token scoring
-    const namePool = `${displayName} ${item.name} ${item.enName || ''}`;
+    // 2. Bilingual Name + English Name + SHE Keywords + Custom Columns token scoring
+    const queryHasKhong = queryTokens.includes('khong') || qNorm.includes('khong');
+    const cleanViName = queryHasKhong
+      ? item.name
+      : item.name.replace(/\(\s*không[^)]*\)/gi, ' ');
+    const enTranslatedName = translateItemName(item, 'EN');
+    const kwStr = (item.keywords || []).join(' ');
+    const customStr = item.customFields
+      ? Object.values(item.customFields).join(' ')
+      : '';
+    const namePool = `${displayName} ${cleanViName} ${enTranslatedName} ${item.enName || ''} ${kwStr} ${customStr}`;
     const nameNorm = normalizeText(namePool);
     const nameTokens = tokenizeTarget(nameNorm);
-    const perTokenScores = queryTokens.map((qt) => scoreTokenAgainst(qt, nameTokens));
+    const perTokenScores = queryTokens.map((qt) =>
+      scoreTokenAgainst(qt, nameTokens)
+    );
     const allNameTokensPass =
       queryTokens.length > 0 && perTokenScores.every((s) => s >= 54);
 
@@ -322,7 +425,9 @@ export function runSmartSearch({
       const avg =
         perTokenScores.reduce((acc, v) => acc + v, 0) / perTokenScores.length;
       let bonus = 0;
-      if (nameNorm.includes(qNorm)) bonus += 38;
+      const coreNameNorm = normalizeText(`${displayName} ${cleanViName} ${enTranslatedName}`);
+      if (coreNameNorm.includes(qNorm)) bonus += 42;
+      else if (nameNorm.includes(qNorm)) bonus += 28;
       if (nameTokens[0] === queryTokens[0]) bonus += 14;
       if (aiRank !== undefined) bonus += Math.max(8, 30 - aiRank * 2);
       bonus += Math.max(0, 10 - Math.abs(displayName.length - q.length) / 8);
@@ -330,39 +435,63 @@ export function runSmartSearch({
       continue;
     }
 
-    // 3. Group Phrase Fallback
+    // 2b. Partial Multi-Token High-Overlap Fallback (>= 60% of tokens with min 2 hits)
+    if (queryTokens.length >= 2) {
+      const strongHits = perTokenScores.filter((s) => s >= 70);
+      const hitRatio = strongHits.length / queryTokens.length;
+      if (strongHits.length >= 2 && hitRatio >= 0.6) {
+        const avgHit =
+          strongHits.reduce((acc, v) => acc + v, 0) / strongHits.length;
+        const aiBonus = aiRank !== undefined ? Math.max(8, 28 - aiRank * 2) : 0;
+        scored.push({
+          item,
+          score: avgHit * 0.72 * hitRatio + aiBonus,
+          len: displayName.length,
+        });
+        continue;
+      }
+    }
+
+    // 3. Group Phrase Fallback (localized + VI + EN group)
     const joinedQ = queryTokens.join(' ');
     const groupNorm = normalizeText(
-      `${translateGroup(item.g, lang)} ${item.g}`
+      `${translateGroup(item.g, lang)} ${translateGroup(item.g, 'EN')} ${item.g}`
     );
-    if (joinedQ.length >= 2 && groupNorm.includes(joinedQ)) {
+    const groupWords = tokenizeTarget(groupNorm);
+    const groupMatchesPhrase =
+      joinedQ.length >= 2 &&
+      (joinedQ.length <= 4
+        ? groupWords.includes(joinedQ)
+        : new RegExp(
+            `(?:^|[\\s/(),.-])${joinedQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s/(),.-])`
+          ).test(groupNorm));
+    if (groupMatchesPhrase) {
       const aiBonus = aiRank !== undefined ? Math.max(6, 24 - aiRank) : 0;
       scored.push({ item, score: 52 + aiBonus, len: displayName.length });
       continue;
     }
 
-    // 4. Hygiene / Storage / Note / QA Intent Matching
+    // 4. Storage / Note / NoFreeze Intent Matching
     let hygieneScore = 0;
-    if (wantsUseToday && hasUseToday(item)) hygieneScore = Math.max(hygieneScore, 50);
-    if (wantsQa && item.flag) hygieneScore = Math.max(hygieneScore, 55);
-    if (
-      wantsHotDisplay &&
-      item.displayHot &&
-      item.displayHot !== '—' &&
-      item.displayHot !== '-'
-    ) {
-      hygieneScore = Math.max(hygieneScore, 48);
-    }
-    if (wantsColdDisplay && item.displayCool && item.displayCool !== '—') {
-      hygieneScore = Math.max(hygieneScore, 48);
-    }
-    if (wantsFreeze && hasCellValue(item.freeze)) hygieneScore = Math.max(hygieneScore, 44);
-    if (wantsCool && hasCellValue(item.cool)) hygieneScore = Math.max(hygieneScore, 44);
-    if (wantsRoom && hasCellValue(item.room)) hygieneScore = Math.max(hygieneScore, 44);
+    if (wantsUseToday && hasUseToday(item)) hygieneScore = Math.max(hygieneScore, 52);
+    if (wantsNoFreeze && isNoFreezeCell(item.freeze)) hygieneScore = Math.max(hygieneScore, 52);
+    if (wantsFreeze && hasCellValue(item.freeze)) hygieneScore = Math.max(hygieneScore, 46);
+    if (wantsCool && hasCellValue(item.cool)) hygieneScore = Math.max(hygieneScore, 46);
+    if (wantsRoom && hasCellValue(item.room)) hygieneScore = Math.max(hygieneScore, 46);
 
-    if (hygieneScore === 0 && qNorm.length >= 4) {
+    if (hygieneScore === 0 && qNorm.length >= 3) {
+      const noteText = isEmptyCell(item.note)
+        ? ''
+        : `${item.note} ${translateItemNote(item, lang)}`;
+      const extraMeta = [
+        item.standardTemp || '',
+        item.packagingSpec || '',
+        item.shelfLifeUnopened || '',
+        item.shelfLifeOpened || '',
+        customStr,
+      ].join(' ');
       const storageAndNotePool = normalizeText(
-        `${item.room} ${item.cool} ${item.freeze} ${item.displayCool || ''} ${item.displayHot || ''} ${isEmptyCell(item.note) ? '' : `${item.note} ${translateItemNote(item, lang)}`} ${item.flag}`
+        `${item.room} ${item.cool} ${item.freeze} ${noteText} ${item.flag} ${extraMeta}`
       );
       if (storageAndNotePool.includes(qNorm)) {
         hygieneScore = 46;
@@ -374,6 +503,11 @@ export function runSmartSearch({
         );
         if (crossScores.every((s) => s >= 70)) {
           hygieneScore = 45;
+        } else {
+          const hitCount = crossScores.filter((s) => s >= 70).length;
+          if (hitCount >= 2 && hitCount / queryTokens.length >= 0.65) {
+            hygieneScore = 41;
+          }
         }
       }
     }
@@ -384,25 +518,40 @@ export function runSmartSearch({
       continue;
     }
 
-    // 5. Pure AI Semantic Match (e.g. "nguyên liệu làm tiramisu", "rã đông giữ được mấy ngày")
+    // 5. Pure AI Semantic Match
     if (aiRank !== undefined) {
       scored.push({
         item,
         score: Math.max(35, 85 - aiRank * 2),
         len: displayName.length,
       });
+      continue;
+    }
+
+    // 6. Primary Head-Noun Variant Fallback (only used if strict tiers yield 0 results, e.g. "bơ lạt", "trứng cút")
+    if (queryTokens.length >= 2) {
+      const genericSkip = new Set(['cac', 'loai', 'do', 'thuc', 'pham', 'che', 'bien', 'khong', 'co', 'da', 'chua', 'moi']);
+      const headTokens = tokenizeTarget(normalizeText(cleanViName)).filter((t) => !genericSkip.has(t));
+      const matchedHeadCount = queryTokens.filter(
+        (qt) => qt.length >= 2 && !genericSkip.has(qt) && (headTokens[0] === qt || (item.keywords || []).some((kw) => normalizeText(kw) === qt))
+      ).length;
+      if (matchedHeadCount >= 1) {
+        headFallbackScored.push({
+          item,
+          score: 36 + matchedHeadCount * 4,
+          len: displayName.length,
+        });
+      }
     }
   }
 
-  scored.sort((a, b) => {
+  const finalResults = scored.length > 0 ? scored : headFallbackScored;
+
+  finalResults.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (a.len !== b.len) return a.len - b.len;
-    return a.item.a === b.item.a
-      ? a.item.n - b.item.n
-      : a.item.a < b.item.a
-        ? -1
-        : 1;
+    return (a.item.order ?? a.item.n) - (b.item.order ?? b.item.n);
   });
 
-  return scored.map((entry) => entry.item);
+  return finalResults.map((entry) => entry.item);
 }

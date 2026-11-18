@@ -6,7 +6,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!api/|assets/|sw\\.js|registerSW\\.js|workbox-.*\\.js|manifest\\.webmanifest|apple-touch-icon\\.png|icon-192\\.png|icon-512\\.png|icon-maskable-512\\.png|bnc-logo\\.jpg).*)",
+      "source": "/((?!api/|assets/|sw\\.js|registerSW\\.js|workbox-.*\\.js|manifest\\.webmanifest|favicon\\.ico|apple-touch-icon\\.png|icon-192\\.png|icon-512\\.png|icon-maskable-512\\.png).*)",
       "destination": "/index.html"
     }
   ],

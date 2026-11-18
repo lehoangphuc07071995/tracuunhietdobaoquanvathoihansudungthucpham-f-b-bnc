@@ -12,7 +12,7 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: [
-          'bnc-logo.jpg',
+          'favicon.ico',
           'apple-touch-icon.png',
           'icon-192.png',
           'icon-512.png',
@@ -20,10 +20,10 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'Hệ Thống Tra Cứu Nhiệt Độ Bảo Quản & Thời Hạn Sử Dụng Thực Phẩm - BNC',
-          short_name: 'Tra Cứu BNC',
+          name: 'Quy Định Bảo Quản & Hạn Sử Dụng Thực Phẩm Khối SHE (SHE-QĐ-FB13)',
+          short_name: 'SHE FB13',
           description:
-            'Hệ thống tra cứu nhiệt độ bảo quản và thời hạn sử dụng thực phẩm - Ban Ẩm Thực Sun World Ba Na Hills.',
+            'Hệ thống tra cứu Quy định bảo quản và hạn sử dụng thực phẩm tại Khối SHE — Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13, PB 00).',
           start_url: '/',
           scope: '/',
           display: 'standalone',

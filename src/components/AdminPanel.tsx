@@ -1,23 +1,32 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   Cloud,
+  Columns3,
+  Copy,
   Database,
   Download,
   Edit3,
+  FolderEdit,
   KeyRound,
   Lock,
   LogOut,
   Plus,
+  Radio,
   RefreshCw,
   RotateCcw,
   Save,
   Settings,
   ShieldCheck,
   Trash2,
+  Unlock,
   Upload,
+  UserCog,
   UserPlus,
   Users,
+  Wifi,
   X,
 } from 'lucide-react';
 import { ALL_GROUPS, getItemCode } from '../data/foodData';
@@ -31,7 +40,10 @@ import {
 } from '../db/dexieDb';
 import {
   applyImportedItemsToDb,
+  bulkDeleteItemsInDb,
+  bulkMoveGroupInDb,
   deleteFoodItemInDb,
+  duplicateFoodItemInDb,
   exportCatalogToCsv,
   exportCatalogToJson,
   exportCatalogToXlsx,
@@ -40,17 +52,22 @@ import {
   loadCloudConfig,
   parseImportFile,
   pullCatalogFromCloud,
+  renameGroupInDb,
   resetCatalogToDefaultBaseline,
   saveCloudConfig,
+  saveOrderedItemsInDb,
   syncCatalogToCloud,
+  testSupabaseConnection,
   upsertFoodItemInDb,
   type ImportMode,
+  type RealtimeConnectionState,
   type SupabaseCloudConfig,
 } from '../services/storageService';
 import type {
   AdminPermission,
   AdminUser,
   AppendixCode,
+  CustomColumnDef,
   FoodItem,
   Lang,
   SystemConfig,
@@ -63,6 +80,7 @@ interface AdminPanelProps {
   onItemsUpdated: (nextItems: FoodItem[]) => void;
   config: SystemConfig;
   onConfigUpdated: (nextConfig: SystemConfig) => void;
+  realtimeStatus?: RealtimeConnectionState;
   lang?: Lang;
 }
 
@@ -97,10 +115,13 @@ const ADMIN_TEXT: Record<
     permDeleteItems: string;
     permViewExport: string;
     permImportData: string;
+    permLockApp: string;
+    permManageCloud: string;
     cloudTitle: string;
     cloudStatusLabel: string;
     cloudDesc: string;
     cloudSaveBtn: string;
+    cloudTestBtn: string;
     cloudPushBtn: string;
     cloudPullBtn: string;
   }
@@ -108,151 +129,155 @@ const ADMIN_TEXT: Record<
   VI: {
     dialogLabel: 'Hệ thống Quản trị Admin',
     close: 'Đóng',
-    headerTitle: 'Quản Trị Hệ Thống & Phân Quyền',
+    headerTitle: 'Trung Tâm Điều Hành & Quản Trị Toàn Quyền',
     authSubtitlePrefix: 'Đang đăng nhập:',
     roleSuper: 'Super Admin',
     roleSub: 'User Phân quyền',
     authProtected: 'Xác thực bảo mật SHA-256',
     logout: 'Đăng xuất',
     loginTitle: 'Đăng nhập Quản trị viên',
-    loginDesc: 'Nhập tên tài khoản và mật khẩu để truy cập hệ thống quản lý dữ liệu.',
+    loginDesc: 'Nhập tên tài khoản và mật khẩu để truy cập hệ thống quản lý & điều hành.',
     usernameLabel: 'Tên đăng nhập',
     passwordLabel: 'Mật khẩu',
     passwordPlaceholder: 'Nhập mật khẩu...',
     loginButton: 'Xác thực & Đăng nhập',
     loginLoading: 'Đang xác thực...',
-    loginInvalid: 'Sai tên đăng nhập hoặc mật khẩu.',
-    tabData: 'Quản lý dữ liệu',
-    tabConfig: 'Cấu hình hệ thống',
+    loginInvalid: 'Sai tên đăng nhập/mật khẩu hoặc tài khoản đang bị khóa.',
+    tabData: 'Bảng dữ liệu & Cột/Hàng',
+    tabConfig: 'Cấu hình & Khóa App',
     tabIo: 'Import / Export',
-    tabUsers: 'Phân quyền & Mật khẩu',
-    tabCloud: 'Đồng bộ Cloud',
-    permManageConfig: 'Cấu hình giao diện & thông báo',
-    permEditItems: 'Thêm & chỉnh sửa sản phẩm',
-    permDeleteItems: 'Xóa sản phẩm',
+    tabUsers: 'Tài khoản & Phân quyền',
+    tabCloud: 'Supabase Realtime',
+    permManageConfig: 'Cấu hình giao diện, cột & thông báo',
+    permEditItems: 'Thêm, sửa nhanh, sắp xếp hàng',
+    permDeleteItems: 'Xóa sản phẩm (đơn lẻ & hàng loạt)',
     permViewExport: 'Xem & Export báo cáo (.json/.csv/.xlsx)',
     permImportData: 'Import / Upload dữ liệu',
-    cloudTitle: 'Đồng bộ Đám mây (Supabase)',
-    cloudStatusLabel: 'Trạng thái hiện tại:',
+    permLockApp: 'Khóa / mở khóa truy cập App toàn hệ thống',
+    permManageCloud: 'Quản lý kết nối & đồng bộ Supabase Cloud',
+    cloudTitle: 'Đồng bộ Realtime Toàn Cầu (Supabase)',
+    cloudStatusLabel: 'Trạng thái cấu hình:',
     cloudDesc:
-      'Hệ thống sử dụng IndexedDB làm cơ sở dữ liệu chính trên thiết bị (hoạt động Offline 100%). Điền trực tiếp 4 thông số Supabase bên dưới (hoặc cấu hình trong Vercel Environment Variables) để đồng bộ dữ liệu giữa nhiều thiết bị:',
+      'Mọi thay đổi dữ liệu, cấu trúc cột và trạng thái khóa ứng dụng sẽ được đẩy lên Supabase và phát Realtime tức thì tới mọi thiết bị đang mở trên toàn thế giới (kèm IndexedDB Offline-First):',
     cloudSaveBtn: 'Lưu cấu hình Supabase',
-    cloudPushBtn: 'Đẩy dữ liệu lên Supabase',
-    cloudPullBtn: 'Tải dữ liệu từ Supabase',
+    cloudTestBtn: 'Kiểm tra kết nối',
+    cloudPushBtn: 'Đẩy dữ liệu & Cấu hình lên Cloud',
+    cloudPullBtn: 'Tải từ Supabase về máy',
   },
   EN: {
     dialogLabel: 'Admin Management System',
     close: 'Close',
-    headerTitle: 'System Admin & Access Control',
+    headerTitle: 'Command Center & Full Access Control',
     authSubtitlePrefix: 'Signed in:',
     roleSuper: 'Super Admin',
     roleSub: 'Scoped User',
     authProtected: 'SHA-256 Protected Authentication',
     logout: 'Sign out',
     loginTitle: 'Administrator Sign In',
-    loginDesc: 'Enter your username and passcode to access catalog & system controls.',
+    loginDesc: 'Enter your username and passcode to access catalog, columns, app lock, and cloud sync.',
     usernameLabel: 'Username',
     passwordLabel: 'Passcode',
     passwordPlaceholder: 'Enter passcode...',
     loginButton: 'Verify & Sign In',
     loginLoading: 'Verifying...',
-    loginInvalid: 'Invalid username or passcode.',
-    tabData: 'Catalog CRUD',
-    tabConfig: 'System Config',
+    loginInvalid: 'Invalid credentials or account is disabled.',
+    tabData: 'Rows & Data CRUD',
+    tabConfig: 'Config, Columns & Lock',
     tabIo: 'Import / Export',
-    tabUsers: 'Roles & Passwords',
-    tabCloud: 'Cloud Sync',
-    permManageConfig: 'UI configuration & alert banner',
-    permEditItems: 'Add & edit food items',
-    permDeleteItems: 'Delete food items',
+    tabUsers: 'Users & Permissions',
+    tabCloud: 'Supabase Realtime',
+    permManageConfig: 'UI config, custom columns & alerts',
+    permEditItems: 'Add, inline edit & reorder rows',
+    permDeleteItems: 'Delete items (single & bulk)',
     permViewExport: 'View & Export reports (.json/.csv/.xlsx)',
     permImportData: 'Import / Upload catalog data',
-    cloudTitle: 'Cloud Sync (Supabase)',
-    cloudStatusLabel: 'Current status:',
+    permLockApp: 'Lock / unlock app globally',
+    permManageCloud: 'Manage Supabase Cloud sync & test connection',
+    cloudTitle: 'Global Realtime Cloud Sync (Supabase)',
+    cloudStatusLabel: 'Config status:',
     cloudDesc:
-      'IndexedDB is the primary on-device database (100% Offline-First). Fill in the 4 Supabase fields below (or configure Vercel Environment Variables) to sync across devices:',
+      'All edits to food items, custom columns, and global app-lock states push to Supabase and broadcast in realtime to all connected devices worldwide:',
     cloudSaveBtn: 'Save Supabase Config',
-    cloudPushBtn: 'Push Data to Supabase',
-    cloudPullBtn: 'Pull Data from Supabase',
+    cloudTestBtn: 'Test Connection',
+    cloudPushBtn: 'Push Catalog & Config to Cloud',
+    cloudPullBtn: 'Pull from Supabase',
   },
   KO: {
     dialogLabel: '관리자 시스템',
     close: '닫기',
-    headerTitle: '시스템 관리 및 권한 제어',
+    headerTitle: '시스템 전체 제어 및 권한 관리',
     authSubtitlePrefix: '로그인됨:',
     roleSuper: '최고 관리자',
     roleSub: '권한 사용자',
     authProtected: 'SHA-256 보안 인증',
     logout: '로그아웃',
     loginTitle: '관리자 로그인',
-    loginDesc: '데이터 관리 시스템에 접근하려면 계정과 비밀번호를 입력하세요.',
+    loginDesc: '데이터, 열/행 구성, 앱 잠금 및 클라우드 동기화를 위해 로그인하세요.',
     usernameLabel: '사용자 이름',
     passwordLabel: '비밀번호',
     passwordPlaceholder: '비밀번호 입력...',
     loginButton: '인증 및 로그인',
     loginLoading: '인증 중...',
-    loginInvalid: '사용자 이름 또는 비밀번호가 올바르지 않습니다.',
-    tabData: '데이터 관리',
-    tabConfig: '시스템 설정',
+    loginInvalid: '계정 정보가 잘못되었거나 비활성화된 계정입니다.',
+    tabData: '행·데이터 관리',
+    tabConfig: '설정·열·앱 잠금',
     tabIo: '가져오기 / 내보내기',
-    tabUsers: '권한 및 비밀번호',
-    tabCloud: '클라우드 동기화',
-    permManageConfig: 'UI 설정 및 공지 배너',
-    permEditItems: '품목 추가 및 수정',
-    permDeleteItems: '품목 삭제',
-    permViewExport: '보고서 조회 및 내보내기 (.json/.csv/.xlsx)',
+    tabUsers: '사용자 및 권한',
+    tabCloud: 'Supabase 실시간',
+    permManageConfig: 'UI 설정, 사용자 정의 열 및 공지',
+    permEditItems: '품목 추가, 인라인 수정 및 순서 변경',
+    permDeleteItems: '품목 삭제 (단일·일괄)',
+    permViewExport: '보고서 조회 및 내보내기',
     permImportData: '데이터 가져오기 / 업로드',
-    cloudTitle: '클라우드 동기화 (Supabase)',
-    cloudStatusLabel: '현재 상태:',
+    permLockApp: '전체 앱 잠금 / 해제',
+    permManageCloud: 'Supabase 클라우드 동기화 관리',
+    cloudTitle: '글로벌 실시간 클라우드 동기화 (Supabase)',
+    cloudStatusLabel: '구성 상태:',
     cloudDesc:
-      '기기의 IndexedDB를 기본 데이터베이스로 사용합니다 (100% 오프라인 작동). 아래 Supabase 4개 항목을 입력하거나 Vercel 환경 변수를 설정하여 여러 기기와 동기화하세요:',
+      '모든 데이터, 열 구성 및 앱 잠금 상태 변경 사항이 전 세계 연결된 모든 기기로 실시간 동기화됩니다:',
     cloudSaveBtn: 'Supabase 설정 저장',
-    cloudPushBtn: 'Supabase로 데이터 업로드',
-    cloudPullBtn: 'Supabase에서 데이터 다운로드',
+    cloudTestBtn: '연결 테스트',
+    cloudPushBtn: '클라우드로 업로드',
+    cloudPullBtn: 'Supabase에서 가져오기',
   },
   HI: {
     dialogLabel: 'एडमिन प्रबंधन प्रणाली',
     close: 'बंद करें',
-    headerTitle: 'सिस्टम एडमिन और एक्सेस कंट्रोल',
+    headerTitle: 'सिस्टम एडमिन व पूर्ण नियंत्रण केंद्र',
     authSubtitlePrefix: 'लॉग इन:',
     roleSuper: 'सुपर एडमिन',
     roleSub: 'सीमित उपयोगकर्ता',
     authProtected: 'SHA-256 सुरक्षित प्रमाणीकरण',
     logout: 'लॉग आउट',
     loginTitle: 'एडमिनिस्ट्रेटर लॉगिन',
-    loginDesc: 'डेटा प्रबंधन प्रणाली तक पहुँचने के लिए उपयोगकर्ता नाम और पासवर्ड दर्ज करें।',
+    loginDesc: 'डेटा, कॉलम, ऐप लॉक व क्लाउड सिंक प्रबंधित करने के लिए लॉगिन करें।',
     usernameLabel: 'उपयोगकर्ता नाम',
     passwordLabel: 'पासवर्ड',
     passwordPlaceholder: 'पासवर्ड दर्ज करें...',
     loginButton: 'सत्यापित करें और लॉगिन करें',
     loginLoading: 'सत्यापन जारी...',
-    loginInvalid: 'गलत उपयोगकर्ता नाम या पासवर्ड।',
-    tabData: 'डेटा प्रबंधन',
-    tabConfig: 'सिस्टम सेटिंग्स',
+    loginInvalid: 'गलत जानकारी या खाता निष्क्रिय है।',
+    tabData: 'डेटा व पंक्ति प्रबंधन',
+    tabConfig: 'सेटिंग्स, कॉलम व लॉक',
     tabIo: 'इम्पोर्ट / एक्सपोर्ट',
-    tabUsers: 'भूमिकाएँ और पासवर्ड',
-    tabCloud: 'क्लाउड सिंक',
-    permManageConfig: 'UI सेटिंग्स और अलर्ट बैनर',
-    permEditItems: 'आइटम जोड़ें और संपादित करें',
-    permDeleteItems: 'आइटम हटाएं',
-    permViewExport: 'रिपोर्ट देखें और एक्सपोर्ट करें (.json/.csv/.xlsx)',
+    tabUsers: 'उपयोगकर्ता व अधिकार',
+    tabCloud: 'Supabase रीयलटाइम',
+    permManageConfig: 'UI सेटिंग्स, कॉलम व अलर्ट बैनर',
+    permEditItems: 'आइटम जोड़ें, इनलाइन संपादन व क्रम बदलें',
+    permDeleteItems: 'आइटम हटाएं (एकल व बैच)',
+    permViewExport: 'रिपोर्ट देखें और एक्सपोर्ट करें',
     permImportData: 'डेटा इम्पोर्ट / अपलोड करें',
-    cloudTitle: 'क्लाउड सिंक (Supabase)',
-    cloudStatusLabel: 'वर्तमान स्थिति:',
+    permLockApp: 'पूरे ऐप को लॉक / अनलॉक करें',
+    permManageCloud: 'Supabase क्लाउड सिंक प्रबंधन',
+    cloudTitle: 'ग्लोबल रीयलटाइम क्लाउड सिंक (Supabase)',
+    cloudStatusLabel: 'कॉन्फ़िग स्थिति:',
     cloudDesc:
-      'डिवाइस पर IndexedDB मुख्य डेटाबेस के रूप में उपयोग होता है (100% ऑफ़लाइन)। विभिन्न उपकरणों में सिंक करने के लिए नीचे 4 Supabase फ़ील्ड भरें:',
+      'सभी डेटा, कस्टम कॉलम और ऐप-लॉक अपडेट दुनिया भर के सभी जुड़े उपकरणों पर रीयलटाइम में सिंक होते हैं:',
     cloudSaveBtn: 'Supabase सेटिंग सहेजें',
-    cloudPushBtn: 'Supabase पर डेटा भेजें',
-    cloudPullBtn: 'Supabase से डेटा डाउनलोड करें',
+    cloudTestBtn: 'कनेक्शन जांचें',
+    cloudPushBtn: 'क्लाउड पर डेटा भेजें',
+    cloudPullBtn: 'Supabase से डाउनलोड करें',
   },
-};
-
-const PERMISSION_LABELS: Record<AdminPermission, string> = {
-  manage_config: 'Cấu hình giao diện & thông báo',
-  edit_items: 'Thêm & chỉnh sửa sản phẩm',
-  delete_items: 'Xóa sản phẩm',
-  view_export_reports: 'Xem & Export báo cáo (.json/.csv/.xlsx)',
-  import_data: 'Import / Upload dữ liệu',
 };
 
 const ALL_PERMISSIONS: AdminPermission[] = [
@@ -261,29 +286,28 @@ const ALL_PERMISSIONS: AdminPermission[] = [
   'delete_items',
   'view_export_reports',
   'import_data',
+  'lock_app',
+  'manage_cloud',
 ];
 
 function createEmptyItemDraft(items: FoodItem[], allowedGroups: string[]): FoodItem {
-  const pl1Max = items
-    .filter((i) => i.a === 'PL1')
-    .reduce((max, i) => Math.max(max, i.n), 0);
+  const sheMax = items.reduce((max, i) => Math.max(max, i.n), 0);
+  const orderMax = items.reduce((max, i) => Math.max(max, i.order ?? i.n), 0);
   const defaultGroup =
     allowedGroups.includes('ALL') || allowedGroups.length === 0
-      ? ALL_GROUPS[0] || 'Bánh ngọt / Pastry'
+      ? ALL_GROUPS[0] || 'Thịt đỏ (Bò/ Bê/ Cừu/ Heo)'
       : allowedGroups[0];
 
   return {
-    a: 'PL1',
-    n: pl1Max + 1,
+    a: 'SHE',
+    n: sheMax + 1,
+    order: orderMax + 1,
     g: defaultGroup,
     name: '',
     enName: '',
-    weight: '',
-    room: '—',
+    room: 'Không',
     cool: '—',
     freeze: '—',
-    displayCool: '',
-    displayHot: '',
     standardTemp: '',
     shelfLifeUnopened: '',
     shelfLifeOpened: '',
@@ -291,7 +315,20 @@ function createEmptyItemDraft(items: FoodItem[], allowedGroups: string[]): FoodI
     note: '—',
     flag: '',
     haccpNote: '',
+    customFields: {},
   };
+}
+
+function slugifyColumnId(label: string): string {
+  const clean = label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return clean || `col_${Date.now().toString(36)}`;
 }
 
 export function AdminPanel({
@@ -301,6 +338,7 @@ export function AdminPanel({
   onItemsUpdated,
   config,
   onConfigUpdated,
+  realtimeStatus = 'disconnected',
   lang = 'VI',
 }: AdminPanelProps) {
   const L = ADMIN_TEXT[lang];
@@ -310,7 +348,10 @@ export function AdminPanel({
     delete_items: L.permDeleteItems,
     view_export_reports: L.permViewExport,
     import_data: L.permImportData,
+    lock_app: L.permLockApp,
+    manage_cloud: L.permManageCloud,
   };
+
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(null);
   const [loginUsername, setLoginUsername] = useState('admin');
   const [loginPassword, setLoginPassword] = useState('');
@@ -320,14 +361,22 @@ export function AdminPanel({
   const [activeTab, setActiveTab] = useState<AdminTab>('data');
   const [toastMsg, setToastMsg] = useState('');
 
-  // Config draft state
+  // Config & Custom Columns draft state
   const [configDraft, setConfigDraft] = useState<SystemConfig>(config);
+  const [newColLabel, setNewColLabel] = useState('');
 
-  // Data CRUD state
+  // Data CRUD + Inline + Bulk + Group Rename state
   const [dataFilterQuery, setDataFilterQuery] = useState('');
   const [dataFilterGroup, setDataFilterGroup] = useState('ALL');
   const [editingItem, setEditingItem] = useState<FoodItem | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
+  const [inlineEditMode, setInlineEditMode] = useState(false);
+  const [inlineDrafts, setInlineDrafts] = useState<Record<string, FoodItem>>({});
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
+  const [bulkMoveTargetGroup, setBulkMoveTargetGroup] = useState('');
+  const [showGroupTools, setShowGroupTools] = useState(false);
+  const [renameOldGroup, setRenameOldGroup] = useState('');
+  const [renameNewGroup, setRenameNewGroup] = useState('');
 
   // Import/Export state
   const [importMode, setImportMode] = useState<ImportMode>('merge');
@@ -350,6 +399,12 @@ export function AdminPanel({
   ]);
   const [newSubAllGroups, setNewSubAllGroups] = useState(true);
   const [newSubGroups, setNewSubGroups] = useState<string[]>([]);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUserPerms, setEditUserPerms] = useState<AdminPermission[]>([]);
+  const [editUserAllGroups, setEditUserAllGroups] = useState(true);
+  const [editUserGroups, setEditUserGroups] = useState<string[]>([]);
+  const [editUserDisabled, setEditUserDisabled] = useState(false);
+  const [editUserNewPassword, setEditUserNewPassword] = useState('');
 
   // Cloud Sync Supabase state
   const [cloudConfigDraft, setCloudConfigDraft] = useState<SupabaseCloudConfig>(
@@ -362,7 +417,7 @@ export function AdminPanel({
     setToastMsg(msg);
     setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? '' : prev));
-    }, 3200);
+    }, 3400);
   };
 
   useEffect(() => {
@@ -407,10 +462,9 @@ export function AdminPanel({
       return;
     }
     if (hasPerm('edit_items') || hasPerm('delete_items')) setActiveTab('data');
-    else if (hasPerm('manage_config')) setActiveTab('config');
-    else if (hasPerm('view_export_reports') || hasPerm('import_data')) {
-      setActiveTab('io');
-    }
+    else if (hasPerm('manage_config') || hasPerm('lock_app')) setActiveTab('config');
+    else if (hasPerm('view_export_reports') || hasPerm('import_data')) setActiveTab('io');
+    else if (hasPerm('manage_cloud')) setActiveTab('cloud');
   }, [currentUser]);
 
   const availableGroups = useMemo(() => {
@@ -426,6 +480,12 @@ export function AdminPanel({
     return availableGroups.filter((g) => allowedGroupsForUser.includes(g));
   }, [availableGroups, allowedGroupsForUser]);
 
+  const customColumnsSorted = useMemo<CustomColumnDef[]>(() => {
+    return [...(configDraft.customColumns || [])].sort(
+      (a, b) => a.order - b.order
+    );
+  }, [configDraft.customColumns]);
+
   const filteredCrudItems = useMemo(() => {
     const q = dataFilterQuery.trim().toLowerCase();
     return items.filter((item) => {
@@ -435,7 +495,8 @@ export function AdminPanel({
       return (
         getItemCode(item).toLowerCase().includes(q) ||
         item.name.toLowerCase().includes(q) ||
-        item.g.toLowerCase().includes(q)
+        item.g.toLowerCase().includes(q) ||
+        item.note.toLowerCase().includes(q)
       );
     });
   }, [items, dataFilterQuery, dataFilterGroup, allowedGroupsForUser]);
@@ -473,11 +534,46 @@ export function AdminPanel({
     reader.readAsDataURL(file);
   };
 
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const saved = await saveSystemConfig(configDraft);
+  const handleSaveConfig = async (
+    e?: React.FormEvent,
+    overridePartial?: Partial<SystemConfig>
+  ) => {
+    if (e) e.preventDefault();
+    const merged = overridePartial
+      ? { ...configDraft, ...overridePartial }
+      : configDraft;
+    const saved = await saveSystemConfig(merged);
+    setConfigDraft(saved);
     onConfigUpdated(saved);
-    showStatus('Đã lưu cấu hình hệ thống vào IndexedDB.');
+    showStatus('Đã lưu cấu hình & đồng bộ trạng thái hệ thống.');
+  };
+
+  const handleAddCustomColumn = () => {
+    const label = newColLabel.trim();
+    if (!label) return;
+    const existing = configDraft.customColumns || [];
+    const baseId = slugifyColumnId(label);
+    const id = existing.some((c) => c.id === baseId)
+      ? `${baseId}_${Date.now().toString(36).slice(-4)}`
+      : baseId;
+    const nextCols: CustomColumnDef[] = [
+      ...existing,
+      { id, label, visible: true, order: existing.length + 1 },
+    ];
+    setConfigDraft((prev) => ({ ...prev, customColumns: nextCols }));
+    setNewColLabel('');
+    showStatus(`Đã thêm cột "${label}" — nhấn Lưu cấu hình để áp dụng.`);
+  };
+
+  const handleMoveCustomColumn = (colId: string, dir: -1 | 1) => {
+    const list = [...customColumnsSorted];
+    const idx = list.findIndex((c) => c.id === colId);
+    const targetIdx = idx + dir;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= list.length) return;
+    const [moved] = list.splice(idx, 1);
+    list.splice(targetIdx, 0, moved);
+    const reindexed = list.map((c, i) => ({ ...c, order: i + 1 }));
+    setConfigDraft((prev) => ({ ...prev, customColumns: reindexed }));
   };
 
   const handleSaveItem = async (e: React.FormEvent) => {
@@ -494,19 +590,116 @@ export function AdminPanel({
     showStatus(`Đã lưu sản phẩm ${getItemCode(editingItem)}.`);
   };
 
+  const handleInlineFieldChange = (
+    item: FoodItem,
+    field: keyof FoodItem,
+    value: string
+  ) => {
+    const code = getItemCode(item);
+    setInlineDrafts((prev) => ({
+      ...prev,
+      [code]: {
+        ...(prev[code] || item),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleInlineCustomFieldChange = (
+    item: FoodItem,
+    colId: string,
+    value: string
+  ) => {
+    const code = getItemCode(item);
+    const base = inlineDrafts[code] || item;
+    setInlineDrafts((prev) => ({
+      ...prev,
+      [code]: {
+        ...base,
+        customFields: {
+          ...(base.customFields || {}),
+          [colId]: value,
+        },
+      },
+    }));
+  };
+
+  const handleSaveInlineRow = async (code: string) => {
+    const draft = inlineDrafts[code];
+    if (!draft) return;
+    const next = await upsertFoodItemInDb(draft);
+    onItemsUpdated(next);
+    setInlineDrafts((prev) => {
+      const clone = { ...prev };
+      delete clone[code];
+      return clone;
+    });
+    showStatus(`Đã cập nhật nhanh hàng ${code}.`);
+  };
+
+  const handleMoveItemRow = async (item: FoodItem, dir: -1 | 1) => {
+    const code = getItemCode(item);
+    const idx = items.findIndex((it) => getItemCode(it) === code);
+    const targetIdx = idx + dir;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= items.length) return;
+    const reordered = [...items];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(targetIdx, 0, moved);
+    const saved = await saveOrderedItemsInDb(reordered);
+    onItemsUpdated(saved);
+    showStatus(`Đã di chuyển hàng ${code} ${dir < 0 ? 'lên trên' : 'xuống dưới'}.`);
+  };
+
+  const handleDuplicateItem = async (item: FoodItem) => {
+    const { items: next, createdCode } = await duplicateFoodItemInDb(item);
+    onItemsUpdated(next);
+    showStatus(`Đã nhân bản thành ${createdCode}.`);
+  };
+
   const handleDeleteItem = async (item: FoodItem) => {
     if (!hasPerm('delete_items')) return;
     const code = getItemCode(item);
     const next = await deleteFoodItemInDb(code);
+    setSelectedCodes((prev) => prev.filter((c) => c !== code));
     onItemsUpdated(next);
     showStatus(`Đã xóa mặt hàng ${code}.`);
   };
 
+  const handleBulkDelete = async () => {
+    if (!hasPerm('delete_items') || selectedCodes.length === 0) return;
+    const next = await bulkDeleteItemsInDb(selectedCodes);
+    const count = selectedCodes.length;
+    setSelectedCodes([]);
+    onItemsUpdated(next);
+    showStatus(`Đã xóa ${count} mục đã chọn.`);
+  };
+
+  const handleBulkMoveGroup = async () => {
+    if (!bulkMoveTargetGroup.trim() || selectedCodes.length === 0) return;
+    const next = await bulkMoveGroupInDb(selectedCodes, bulkMoveTargetGroup.trim());
+    const count = selectedCodes.length;
+    setSelectedCodes([]);
+    onItemsUpdated(next);
+    showStatus(`Đã chuyển ${count} mục sang nhóm "${bulkMoveTargetGroup.trim()}".`);
+  };
+
+  const handleRenameGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameOldGroup || !renameNewGroup.trim()) return;
+    const next = await renameGroupInDb(renameOldGroup, renameNewGroup.trim());
+    onItemsUpdated(next);
+    showStatus(`Đã đổi tên nhóm "${renameOldGroup}" thành "${renameNewGroup.trim()}".`);
+    setRenameOldGroup('');
+    setRenameNewGroup('');
+  };
+
   const handleResetBaseline = async () => {
     const next = await resetCatalogToDefaultBaseline();
+    setSelectedCodes([]);
+    setInlineDrafts({});
     onItemsUpdated(next);
     onConfigUpdated({ ...DEFAULT_SYSTEM_CONFIG, updatedAt: Date.now() });
-    showStatus('Đã khôi phục toàn bộ 145 dữ liệu gốc & giao diện mặc định.');
+    showStatus('Đã khôi phục toàn bộ 66 mục chuẩn SHE-QĐ-FB13 & giao diện mặc định.');
   };
 
   const handleFilePickForImport = async (
@@ -590,6 +783,7 @@ export function AdminPanel({
         : newSubGroups.length > 0
           ? newSubGroups
           : ['ALL'],
+      disabled: false,
       createdAt: Date.now(),
     };
     await db.users.put(subUser);
@@ -599,17 +793,80 @@ export function AdminPanel({
     showStatus(`Đã tạo tài khoản phân quyền "${uname}".`);
   };
 
+  const startEditingSubUser = (u: AdminUser) => {
+    setEditingUserId(u.id);
+    setEditUserPerms([...u.permissions]);
+    const isAll = u.allowedGroups.includes('ALL');
+    setEditUserAllGroups(isAll);
+    setEditUserGroups(isAll ? [] : [...u.allowedGroups]);
+    setEditUserDisabled(Boolean(u.disabled));
+    setEditUserNewPassword('');
+  };
+
+  const handleSaveEditedSubUser = async (user: AdminUser) => {
+    let passwordHash = user.passwordHash;
+    if (editUserNewPassword.trim()) {
+      if (editUserNewPassword.trim().length < 4) {
+        showStatus('Mật khẩu mới cần tối thiểu 4 ký tự.');
+        return;
+      }
+      passwordHash = await hashPasswordSha256(editUserNewPassword.trim());
+    }
+    const updated: AdminUser = {
+      ...user,
+      passwordHash,
+      permissions: editUserPerms,
+      allowedGroups: editUserAllGroups
+        ? ['ALL']
+        : editUserGroups.length > 0
+          ? editUserGroups
+          : ['ALL'],
+      disabled: editUserDisabled,
+    };
+    await db.users.put(updated);
+    setEditingUserId(null);
+    setEditUserNewPassword('');
+    await loadUsers();
+    showStatus(`Đã cập nhật quyền cho tài khoản "${user.username}".`);
+  };
+
   const handleDeleteSubUser = async (userId: string) => {
     await db.users.delete(userId);
+    if (editingUserId === userId) setEditingUserId(null);
     await loadUsers();
     showStatus('Đã xóa tài khoản phụ.');
   };
 
   const cloudStatus = getCloudSyncStatus(cloudConfigDraft);
 
+  const realtimeBadge =
+    realtimeStatus === 'connected'
+      ? {
+          cls: 'bg-[#ECFDF5] border-[#A7F3D0] text-[#065F46]',
+          label: 'Realtime WebSocket Live',
+        }
+      : realtimeStatus === 'polling'
+        ? {
+            cls: 'bg-[#EEF6F8] border-[#BBD7E3] text-[#0F5E6E]',
+            label: 'Đồng bộ nền (Auto Polling)',
+          }
+        : realtimeStatus === 'connecting'
+          ? {
+              cls: 'bg-[#FDF8EB] border-[#DFBA51] text-[#8A6510]',
+              label: 'Đang kết nối Realtime...',
+            }
+          : {
+              cls: 'bg-[#F3F4F6] border-[#D1D5DB] text-[#4B5563]',
+              label: 'Offline / Chưa bật Cloud',
+            };
+
+  const allFilteredSelected =
+    filteredCrudItems.length > 0 &&
+    filteredCrudItems.every((it) => selectedCodes.includes(getItemCode(it)));
+
   return (
     <div
-      className="fade-in fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      className="fade-in fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={L.dialogLabel}
@@ -618,10 +875,10 @@ export function AdminPanel({
         type="button"
         aria-label={L.close}
         onClick={onClose}
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-slate-900/65 backdrop-blur-sm"
       />
 
-      <div className="sheet-up relative w-full max-w-[960px] max-h-[92dvh] flex flex-col bg-white text-[#182230] border border-[#E2DDD0] rounded-t-[24px] sm:rounded-[20px] shadow-2xl overflow-hidden">
+      <div className="sheet-up relative w-full max-w-[1060px] max-h-[94dvh] flex flex-col bg-white text-[#182230] border border-[#E2DDD0] rounded-t-[24px] sm:rounded-[20px] shadow-2xl overflow-hidden">
         <div className="mx-auto mt-2.5 h-1.5 w-10 rounded-full bg-[#D6D0C0] sm:hidden shrink-0" />
 
         {/* Header */}
@@ -667,7 +924,7 @@ export function AdminPanel({
 
         {/* Status Toast Inside Modal */}
         {toastMsg && (
-          <div className="bg-[#EEF6F8] border-b border-[#BBD7E3] px-5 py-2 text-[12.5px] font-bold text-[#0F5E6E] flex items-center gap-2">
+          <div className="bg-[#EEF6F8] border-b border-[#BBD7E3] px-5 py-2 text-[12.5px] font-bold text-[#0F5E6E] flex items-center gap-2 shrink-0">
             <Check size={15} />
             <span>{toastMsg}</span>
           </div>
@@ -686,9 +943,7 @@ export function AdminPanel({
               <h3 className="text-[18px] font-extrabold text-[#122A47]">
                 {L.loginTitle}
               </h3>
-              <p className="text-[12.5px] text-[#5C6573]">
-                {L.loginDesc}
-              </p>
+              <p className="text-[12.5px] text-[#5C6573]">{L.loginDesc}</p>
             </div>
 
             <div>
@@ -754,7 +1009,7 @@ export function AdminPanel({
                 </button>
               )}
 
-              {hasPerm('manage_config') && (
+              {(hasPerm('manage_config') || hasPerm('lock_app')) && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('config')}
@@ -766,6 +1021,11 @@ export function AdminPanel({
                 >
                   <Settings size={14} />
                   <span>{L.tabConfig}</span>
+                  {configDraft.appLocked && (
+                    <span className="ml-0.5 rounded px-1.5 py-0.5 text-[10px] bg-[#FEE2E2] text-[#B91C1C]">
+                      LOCKED
+                    </span>
+                  )}
                 </button>
               )}
 
@@ -799,7 +1059,9 @@ export function AdminPanel({
                 </button>
               )}
 
-              {(currentUser.role === 'super_admin' || hasPerm('manage_config')) && (
+              {(currentUser.role === 'super_admin' ||
+                hasPerm('manage_cloud') ||
+                hasPerm('manage_config')) && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('cloud')}
@@ -817,185 +1079,411 @@ export function AdminPanel({
 
             {/* Active Tab Body */}
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-5">
-              {/* TAB 1: SYSTEM CONFIG */}
-              {activeTab === 'config' && hasPerm('manage_config') && (
-                <form
-                  onSubmit={(e) => void handleSaveConfig(e)}
-                  className="space-y-4"
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <div>
-                      <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
-                        Tên ứng dụng (Desktop Title)
-                      </label>
-                      <input
-                        value={configDraft.appTitle}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({ ...p, appTitle: e.target.value }))
-                        }
-                        className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
-                        Tiêu đề phụ (Subtitle / Đơn vị)
-                      </label>
-                      <input
-                        value={configDraft.appSubtitle}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({
-                            ...p,
-                            appSubtitle: e.target.value,
-                          }))
-                        }
-                        className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
-                        Dòng 1 trên Mobile
-                      </label>
-                      <input
-                        value={configDraft.mobileTitleLine1}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({
-                            ...p,
-                            mobileTitleLine1: e.target.value,
-                          }))
-                        }
-                        className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
-                        Dòng 2 trên Mobile
-                      </label>
-                      <input
-                        value={configDraft.mobileTitleLine2}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({
-                            ...p,
-                            mobileTitleLine2: e.target.value,
-                          }))
-                        }
-                        className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
-                      />
-                    </div>
-                  </div>
+              {/* TAB 1: SYSTEM CONFIG, CUSTOM COLUMNS & APP LOCK */}
+              {activeTab === 'config' &&
+                (hasPerm('manage_config') || hasPerm('lock_app')) && (
+                  <form
+                    onSubmit={(e) => void handleSaveConfig(e)}
+                    className="space-y-5"
+                  >
+                    {/* Global App Lock Control */}
+                    {(hasPerm('lock_app') || currentUser.role === 'super_admin') && (
+                      <div
+                        className={`rounded-2xl border p-4 space-y-3 ${
+                          configDraft.appLocked
+                            ? 'border-[#FCA5A5] bg-[#FEF2F2]'
+                            : 'border-[#DFD9CB] bg-[#FAF9F6]'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {configDraft.appLocked ? (
+                              <Lock size={18} className="text-[#B91C1C]" />
+                            ) : (
+                              <Unlock size={18} className="text-[#0F5E6E]" />
+                            )}
+                            <div>
+                              <h3 className="text-[14px] font-extrabold text-[#122A47]">
+                                Khóa truy cập App toàn hệ thống (Global App Lock)
+                              </h3>
+                              <p className="text-[12px] text-[#5C6573]">
+                                Khi bật, toàn bộ người dùng trên mọi thiết bị sẽ thấy màn hình khóa (Admin vẫn đăng nhập mở khóa được).
+                              </p>
+                            </div>
+                          </div>
 
-                  {/* Logo & Banner */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <div className="rounded-xl border border-[#EAE5DA] p-3.5 bg-[#FAF9F6] space-y-2">
-                      <label className="block text-[12px] font-bold text-[#122A47]">
-                        Logo ứng dụng (URL hoặc Tải ảnh lên)
-                      </label>
-                      <input
-                        value={configDraft.logoUrl}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({ ...p, logoUrl: e.target.value }))
-                        }
-                        placeholder="/bnc-logo.jpg"
-                        className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
-                      />
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) =>
-                          handleImageFileUpload(e.target.files?.[0], 'logoUrl')
-                        }
-                        className="block w-full text-[12px] text-[#5C6573]"
-                      />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextLocked = !configDraft.appLocked;
+                              setConfigDraft((p) => ({
+                                ...p,
+                                appLocked: nextLocked,
+                              }));
+                              void handleSaveConfig(undefined, {
+                                appLocked: nextLocked,
+                              });
+                            }}
+                            className={`h-9 px-3.5 rounded-xl font-bold text-[12.5px] flex items-center gap-1.5 transition-colors ${
+                              configDraft.appLocked
+                                ? 'bg-[#0F5E6E] text-white hover:opacity-90'
+                                : 'bg-[#B91C1C] text-white hover:opacity-90'
+                            }`}
+                          >
+                            {configDraft.appLocked ? (
+                              <>
+                                <Unlock size={14} />
+                                <span>Mở khóa App ngay</span>
+                              </>
+                            ) : (
+                              <>
+                                <Lock size={14} />
+                                <span>Khóa App ngay</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-3">
+                          <div>
+                            <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
+                              Thông báo hiển thị trên màn hình khóa
+                            </label>
+                            <input
+                              value={configDraft.appLockMessage || ''}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  appLockMessage: e.target.value,
+                                }))
+                              }
+                              placeholder="Ví dụ: Hệ thống đang tạm khóa để kiểm kê & cập nhật quy định mới Khối SHE."
+                              className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
+                              Mã PIN mở khóa nhanh (tùy chọn)
+                            </label>
+                            <input
+                              value={configDraft.appLockPin || ''}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  appLockPin: e.target.value,
+                                }))
+                              }
+                              placeholder="VD: 10726 (để trống = chỉ Admin mở)"
+                              className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 font-mono text-[12.5px]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Custom Columns Manager */}
+                    {hasPerm('manage_config') && (
+                      <div className="rounded-2xl border border-[#DFD9CB] bg-white p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Columns3 size={17} className="text-[#1E4A75]" />
+                          <div>
+                            <h3 className="text-[14px] font-extrabold text-[#122A47]">
+                              Quản lý Cột hiển thị bổ sung (Thêm / Sửa / Di chuyển / Ẩn / Xóa)
+                            </h3>
+                            <p className="text-[12px] text-[#5C6573]">
+                              Các cột tùy chỉnh xuất hiện trong Form nhập liệu, Bảng danh sách, Thẻ sản phẩm và Trợ lý AI.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <input
+                            value={newColLabel}
+                            onChange={(e) => setNewColLabel(e.target.value)}
+                            placeholder="Tên cột mới (ví dụ: Vị trí tủ, Nhà cung cấp, Tiêu chuẩn QA...)"
+                            className="flex-1 min-w-[220px] h-9 rounded-lg border border-[#D8D2C2] px-3 text-[13px]"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddCustomColumn}
+                            className="h-9 px-3.5 rounded-lg bg-[#122A47] hover:bg-[#1E4A75] text-white text-[12.5px] font-bold flex items-center gap-1"
+                          >
+                            <Plus size={14} />
+                            <span>Thêm cột</span>
+                          </button>
+                        </div>
+
+                        {customColumnsSorted.length > 0 && (
+                          <div className="divide-y divide-[#EAE5DA] rounded-xl border border-[#EAE5DA]">
+                            {customColumnsSorted.map((col, idx) => (
+                              <div
+                                key={col.id}
+                                className="p-2.5 flex flex-wrap items-center justify-between gap-2 bg-[#FAF9F6]"
+                              >
+                                <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                                  <span className="font-mono text-[11px] text-[#8A6510] font-bold">
+                                    #{idx + 1}
+                                  </span>
+                                  <input
+                                    value={col.label}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setConfigDraft((p) => ({
+                                        ...p,
+                                        customColumns: (p.customColumns || []).map(
+                                          (c) =>
+                                            c.id === col.id ? { ...c, label: val } : c
+                                        ),
+                                      }));
+                                    }}
+                                    className="h-8 flex-1 rounded-lg border border-[#D8D2C2] bg-white px-2.5 text-[12.5px] font-bold"
+                                  />
+                                  <span className="font-mono text-[10.5px] text-[#64748B]">
+                                    {col.id}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                  <label className="flex items-center gap-1 text-[12px] font-semibold cursor-pointer px-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={col.visible}
+                                      onChange={(e) => {
+                                        const chk = e.target.checked;
+                                        setConfigDraft((p) => ({
+                                          ...p,
+                                          customColumns: (p.customColumns || []).map(
+                                            (c) =>
+                                              c.id === col.id
+                                                ? { ...c, visible: chk }
+                                                : c
+                                          ),
+                                        }));
+                                      }}
+                                      className="accent-[#122A47]"
+                                    />
+                                    <span>Hiện</span>
+                                  </label>
+                                  <button
+                                    type="button"
+                                    disabled={idx === 0}
+                                    onClick={() => handleMoveCustomColumn(col.id, -1)}
+                                    title="Di chuyển cột lên / sang trái"
+                                    className="h-8 w-8 rounded-lg border border-[#DFD9CB] bg-white disabled:opacity-35 flex items-center justify-center"
+                                  >
+                                    <ArrowUp size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={idx === customColumnsSorted.length - 1}
+                                    onClick={() => handleMoveCustomColumn(col.id, 1)}
+                                    title="Di chuyển cột xuống / sang phải"
+                                    className="h-8 w-8 rounded-lg border border-[#DFD9CB] bg-white disabled:opacity-35 flex items-center justify-center"
+                                  >
+                                    <ArrowDown size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfigDraft((p) => ({
+                                        ...p,
+                                        customColumns: (p.customColumns || []).filter(
+                                          (c) => c.id !== col.id
+                                        ),
+                                      }));
+                                    }}
+                                    title="Xóa cột"
+                                    className="h-8 w-8 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] flex items-center justify-center"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* General Title, Logo, Banner & Alert Banner */}
+                    {hasPerm('manage_config') && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Tên ứng dụng (Desktop Title)
+                            </label>
+                            <input
+                              value={configDraft.appTitle}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({ ...p, appTitle: e.target.value }))
+                              }
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Tiêu đề phụ (Subtitle / Đơn vị)
+                            </label>
+                            <input
+                              value={configDraft.appSubtitle}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  appSubtitle: e.target.value,
+                                }))
+                              }
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Dòng 1 trên Mobile
+                            </label>
+                            <input
+                              value={configDraft.mobileTitleLine1}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  mobileTitleLine1: e.target.value,
+                                }))
+                              }
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Dòng 2 trên Mobile
+                            </label>
+                            <input
+                              value={configDraft.mobileTitleLine2}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  mobileTitleLine2: e.target.value,
+                                }))
+                              }
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          <div className="rounded-xl border border-[#EAE5DA] p-3.5 bg-[#FAF9F6] space-y-2">
+                            <label className="block text-[12px] font-bold text-[#122A47]">
+                              Logo ứng dụng (URL hoặc Tải ảnh lên)
+                            </label>
+                            <input
+                              value={configDraft.logoUrl}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({ ...p, logoUrl: e.target.value }))
+                              }
+                              placeholder="Để trống để dùng huy hiệu SHE mặc định"
+                              className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
+                            />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                handleImageFileUpload(e.target.files?.[0], 'logoUrl')
+                              }
+                              className="block w-full text-[12px] text-[#5C6573]"
+                            />
+                          </div>
+
+                          <div className="rounded-xl border border-[#EAE5DA] p-3.5 bg-[#FAF9F6] space-y-2">
+                            <label className="block text-[12px] font-bold text-[#122A47]">
+                              Banner trang chủ (tùy chọn)
+                            </label>
+                            <input
+                              value={configDraft.bannerImageUrl}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  bannerImageUrl: e.target.value,
+                                }))
+                              }
+                              placeholder="Để trống nếu không dùng banner"
+                              className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
+                            />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                handleImageFileUpload(
+                                  e.target.files?.[0],
+                                  'bannerImageUrl'
+                                )
+                              }
+                              className="block w-full text-[12px] text-[#5C6573]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-[#E8D9A8] bg-[#FDF8EB] p-4 space-y-2.5">
+                          <label className="flex items-center gap-2 text-[13px] font-bold text-[#122A47] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={configDraft.alertBannerEnabled}
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  alertBannerEnabled: e.target.checked,
+                                }))
+                              }
+                              className="h-4 w-4 accent-[#122A47]"
+                            />
+                            <span>Bật thông báo nổi bật trên trang chủ (Alert Banner)</span>
+                          </label>
+                          <input
+                            value={configDraft.alertBannerText}
+                            onChange={(e) =>
+                              setConfigDraft((p) => ({
+                                ...p,
+                                alertBannerText: e.target.value,
+                              }))
+                            }
+                            placeholder="Ví dụ: Lưu ý kiểm tra nhiệt độ tủ mát đầu ca lúc 07:00 hằng ngày..."
+                            className="w-full h-10 rounded-xl border border-[#DFBA51] bg-white px-3 text-[13px]"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="submit"
+                        className="h-10 px-5 rounded-xl bg-[#122A47] hover:bg-[#1E4A75] text-white text-[13px] font-bold flex items-center gap-1.5"
+                      >
+                        <Save size={15} />
+                        <span>Lưu &amp; Đồng bộ cấu hình</span>
+                      </button>
+                      {hasPerm('manage_config') && (
+                        <button
+                          type="button"
+                          onClick={() => setConfigDraft(DEFAULT_SYSTEM_CONFIG)}
+                          className="h-10 px-4 rounded-xl border border-[#DFD9CB] bg-[#FAF9F6] text-[13px] font-bold text-[#2B3647]"
+                        >
+                          Đặt lại mặc định giao diện
+                        </button>
+                      )}
                     </div>
+                  </form>
+                )}
 
-                    <div className="rounded-xl border border-[#EAE5DA] p-3.5 bg-[#FAF9F6] space-y-2">
-                      <label className="block text-[12px] font-bold text-[#122A47]">
-                        Banner trang chủ (tùy chọn)
-                      </label>
-                      <input
-                        value={configDraft.bannerImageUrl}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({
-                            ...p,
-                            bannerImageUrl: e.target.value,
-                          }))
-                        }
-                        placeholder="Để trống nếu không dùng banner"
-                        className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
-                      />
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) =>
-                          handleImageFileUpload(
-                            e.target.files?.[0],
-                            'bannerImageUrl'
-                          )
-                        }
-                        className="block w-full text-[12px] text-[#5C6573]"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Alert Banner Marquee */}
-                  <div className="rounded-xl border border-[#E8D9A8] bg-[#FDF8EB] p-4 space-y-2.5">
-                    <label className="flex items-center gap-2 text-[13px] font-bold text-[#122A47] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={configDraft.alertBannerEnabled}
-                        onChange={(e) =>
-                          setConfigDraft((p) => ({
-                            ...p,
-                            alertBannerEnabled: e.target.checked,
-                          }))
-                        }
-                        className="h-4 w-4 accent-[#122A47]"
-                      />
-                      <span>Bật thông báo nổi bật trên trang chủ (Alert Banner)</span>
-                    </label>
-                    <input
-                      value={configDraft.alertBannerText}
-                      onChange={(e) =>
-                        setConfigDraft((p) => ({
-                          ...p,
-                          alertBannerText: e.target.value,
-                        }))
-                      }
-                      placeholder="Ví dụ: Lưu ý kiểm tra nhiệt độ tủ mát đầu ca lúc 07:00 hằng ngày..."
-                      className="w-full h-10 rounded-xl border border-[#DFBA51] bg-white px-3 text-[13px]"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <button
-                      type="submit"
-                      className="h-10 px-5 rounded-xl bg-[#122A47] hover:bg-[#1E4A75] text-white text-[13px] font-bold flex items-center gap-1.5"
-                    >
-                      <Save size={15} />
-                      <span>Lưu cấu hình</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfigDraft(DEFAULT_SYSTEM_CONFIG)}
-                      className="h-10 px-4 rounded-xl border border-[#DFD9CB] bg-[#FAF9F6] text-[13px] font-bold text-[#2B3647]"
-                    >
-                      Đặt lại mặc định giao diện
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* TAB 2: DATA CRUD */}
+              {/* TAB 2: DATA CRUD + INLINE EDIT + REORDER + BULK ACTIONS */}
               {activeTab === 'data' &&
                 (hasPerm('edit_items') || hasPerm('delete_items')) && (
-                  <div className="space-y-4">
+                  <div className="space-y-3.5">
                     {!editingItem ? (
                       <>
+                        {/* Search + Group + Action Toolbar */}
                         <div className="flex flex-wrap items-center justify-between gap-2.5">
                           <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
                             <input
                               value={dataFilterQuery}
                               onChange={(e) => setDataFilterQuery(e.target.value)}
-                              placeholder="Tìm tên, mã PL1-01, nhóm..."
+                              placeholder="Tìm loại thực phẩm, mã SHE-01, nhóm..."
                               className="h-10 flex-1 min-w-[180px] rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
                             />
                             <select
@@ -1012,92 +1500,445 @@ export function AdminPanel({
                             </select>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             {hasPerm('edit_items') && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsAddingNew(true);
-                                  setEditingItem(
-                                    createEmptyItemDraft(items, allowedGroupsForUser)
-                                  );
-                                }}
-                                className="h-10 px-4 rounded-xl bg-[#122A47] hover:bg-[#1E4A75] text-white text-[13px] font-bold flex items-center gap-1.5"
-                              >
-                                <Plus size={15} />
-                                <span>Thêm mặt hàng</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInlineEditMode((v) => !v);
+                                    setInlineDrafts({});
+                                  }}
+                                  className={`h-10 px-3 rounded-xl border text-[12.5px] font-bold flex items-center gap-1.5 ${
+                                    inlineEditMode
+                                      ? 'bg-[#0F5E6E] border-[#0F5E6E] text-white'
+                                      : 'bg-white border-[#DFD9CB] text-[#122A47]'
+                                  }`}
+                                >
+                                  <Edit3 size={14} />
+                                  <span>
+                                    {inlineEditMode ? 'Đang Sửa Ô Trực Tiếp' : 'Sửa ô trực tiếp'}
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowGroupTools((v) => !v)}
+                                  className={`h-10 px-3 rounded-xl border text-[12.5px] font-bold flex items-center gap-1.5 ${
+                                    showGroupTools
+                                      ? 'bg-[#EEF6F8] border-[#1E4A75] text-[#122A47]'
+                                      : 'bg-white border-[#DFD9CB] text-[#122A47]'
+                                  }`}
+                                >
+                                  <FolderEdit size={14} />
+                                  <span>Nhóm</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsAddingNew(true);
+                                    setEditingItem(
+                                      createEmptyItemDraft(items, allowedGroupsForUser)
+                                    );
+                                  }}
+                                  className="h-10 px-3.5 rounded-xl bg-[#122A47] hover:bg-[#1E4A75] text-white text-[13px] font-bold flex items-center gap-1.5"
+                                >
+                                  <Plus size={15} />
+                                  <span>Thêm hàng</span>
+                                </button>
+                              </>
                             )}
                             {currentUser.role === 'super_admin' && (
                               <button
                                 type="button"
                                 onClick={() => void handleResetBaseline()}
-                                title="Khôi phục 145 dữ liệu chuẩn ban đầu"
+                                title="Khôi phục 66 mục chuẩn SHE-QĐ-FB13"
                                 className="h-10 px-3 rounded-xl border border-[#DFD9CB] bg-[#FAF9F6] hover:bg-[#F2EFE8] text-[#8A6510] text-[12px] font-bold flex items-center gap-1.5"
                               >
                                 <RotateCcw size={14} />
-                                <span className="hidden sm:inline">
-                                  Khôi phục gốc (145)
-                                </span>
+                                <span className="hidden sm:inline">Gốc (66)</span>
                               </button>
                             )}
                           </div>
                         </div>
 
-                        <div className="rounded-xl border border-[#EAE5DA] divide-y divide-[#EAE5DA] max-h-[420px] overflow-y-auto">
-                          {filteredCrudItems.map((item) => {
-                            const code = getItemCode(item);
-                            return (
-                              <div
-                                key={code}
-                                className="p-3 flex items-center justify-between gap-3 hover:bg-[#FAF9F6]"
+                        {/* Group Rename Tool */}
+                        {showGroupTools && hasPerm('edit_items') && (
+                          <form
+                            onSubmit={(e) => void handleRenameGroup(e)}
+                            className="rounded-xl border border-[#D4E2EA] bg-[#F1F7FA] p-3 flex flex-wrap items-end gap-2.5"
+                          >
+                            <div className="flex-1 min-w-[180px]">
+                              <label className="block text-[11px] font-bold text-[#122A47] mb-1">
+                                Chọn nhóm cần đổi tên
+                              </label>
+                              <select
+                                value={renameOldGroup}
+                                onChange={(e) => setRenameOldGroup(e.target.value)}
+                                required
+                                className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-2.5 text-[12.5px]"
                               >
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 text-[11.5px]">
-                                    <span className="font-mono font-bold text-[#8A6510]">
-                                      {code}
-                                    </span>
-                                    <span className="text-[#5C6573] truncate">
-                                      {item.g}
-                                    </span>
-                                  </div>
-                                  <p className="font-bold text-[13.5px] text-[#122A47] truncate">
-                                    {item.name}
-                                  </p>
-                                  <p className="text-[11.5px] text-[#5C6573] truncate">
-                                    Phòng: {item.room} · Mát: {item.cool} · Đông:{' '}
-                                    {item.freeze}
-                                  </p>
+                                <option value="">-- Chọn nhóm --</option>
+                                {scopedGroups.map((g) => (
+                                  <option key={g} value={g}>
+                                    {g}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex-1 min-w-[180px]">
+                              <label className="block text-[11px] font-bold text-[#122A47] mb-1">
+                                Tên nhóm mới
+                              </label>
+                              <input
+                                value={renameNewGroup}
+                                onChange={(e) => setRenameNewGroup(e.target.value)}
+                                placeholder="Nhập tên nhóm mới..."
+                                required
+                                className="w-full h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12.5px]"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              className="h-9 px-4 rounded-lg bg-[#122A47] text-white text-[12.5px] font-bold"
+                            >
+                              Đổi tên toàn nhóm
+                            </button>
+                          </form>
+                        )}
+
+                        {/* Bulk Action Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#EAE5DA] bg-[#FAF9F6] px-3 py-2 text-[12px]">
+                          <label className="flex items-center gap-2 font-bold text-[#122A47] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={allFilteredSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedCodes(
+                                    filteredCrudItems.map((it) => getItemCode(it))
+                                  );
+                                } else {
+                                  setSelectedCodes([]);
+                                }
+                              }}
+                              className="h-4 w-4 accent-[#122A47]"
+                            />
+                            <span>
+                              Chọn tất cả ({selectedCodes.length}/{filteredCrudItems.length})
+                            </span>
+                          </label>
+
+                          {selectedCodes.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {hasPerm('edit_items') && (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    list="she-bulk-groups"
+                                    value={bulkMoveTargetGroup}
+                                    onChange={(e) =>
+                                      setBulkMoveTargetGroup(e.target.value)
+                                    }
+                                    placeholder="Nhóm đích để chuyển..."
+                                    className="h-8 w-44 rounded-lg border border-[#D8D2C2] bg-white px-2.5 text-[12px]"
+                                  />
+                                  <datalist id="she-bulk-groups">
+                                    {scopedGroups.map((g) => (
+                                      <option key={g} value={g} />
+                                    ))}
+                                  </datalist>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleBulkMoveGroup()}
+                                    className="h-8 px-3 rounded-lg bg-[#1E4A75] text-white font-bold text-[12px]"
+                                  >
+                                    Chuyển nhóm
+                                  </button>
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {hasPerm('edit_items') && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setIsAddingNew(false);
-                                        setEditingItem({ ...item });
-                                      }}
-                                      className="h-9 px-3 rounded-lg border border-[#DFD9CB] bg-white hover:border-[#1E4A75] text-[#122A47] text-[12px] font-bold flex items-center gap-1"
-                                    >
-                                      <Edit3 size={13} />
-                                      <span>Sửa</span>
-                                    </button>
-                                  )}
-                                  {hasPerm('delete_items') && (
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleDeleteItem(item)}
-                                      aria-label={`Xóa ${code}`}
-                                      className="h-9 w-9 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] hover:bg-[#FEE2E2] flex items-center justify-center"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
+                              )}
+                              {hasPerm('delete_items') && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleBulkDelete()}
+                                  className="h-8 px-3 rounded-lg bg-[#B91C1C] text-white font-bold text-[12px] flex items-center gap-1"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Xóa {selectedCodes.length} mục</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
+
+                        {/* Items List or Inline Spreadsheet Table */}
+                        {inlineEditMode ? (
+                          <div className="rounded-xl border border-[#EAE5DA] overflow-x-auto max-h-[430px] overflow-y-auto">
+                            <table className="w-full text-left border-collapse text-[12px]">
+                              <thead className="sticky top-0 z-10 bg-[#122A47] text-white">
+                                <tr>
+                                  <th className="p-2 w-8"></th>
+                                  <th className="p-2 whitespace-nowrap">Mã</th>
+                                  <th className="p-2 min-w-[170px]">Loại cụ thể</th>
+                                  <th className="p-2 min-w-[115px]">Phòng (15–25°C)</th>
+                                  <th className="p-2 min-w-[115px]">Lạnh (0–5°C)</th>
+                                  <th className="p-2 min-w-[125px]">Đông (≤ −18°C)</th>
+                                  <th className="p-2 min-w-[180px]">Lưu ý</th>
+                                  {customColumnsSorted.map((col) => (
+                                    <th key={col.id} className="p-2 min-w-[120px]">
+                                      {col.label}
+                                    </th>
+                                  ))}
+                                  <th className="p-2 whitespace-nowrap text-right">
+                                    Hành động
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[#EAE5DA] bg-white">
+                                {filteredCrudItems.map((item) => {
+                                  const code = getItemCode(item);
+                                  const draft = inlineDrafts[code] || item;
+                                  const isDirty = Boolean(inlineDrafts[code]);
+                                  return (
+                                    <tr key={code} className="hover:bg-[#FAF9F6]">
+                                      <td className="p-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedCodes.includes(code)}
+                                          onChange={(e) => {
+                                            setSelectedCodes((prev) =>
+                                              e.target.checked
+                                                ? [...prev, code]
+                                                : prev.filter((c) => c !== code)
+                                            );
+                                          }}
+                                          className="accent-[#122A47]"
+                                        />
+                                      </td>
+                                      <td className="p-2 font-mono font-bold text-[#8A6510] whitespace-nowrap">
+                                        {code}
+                                      </td>
+                                      <td className="p-1.5">
+                                        <input
+                                          value={draft.name}
+                                          onChange={(e) =>
+                                            handleInlineFieldChange(
+                                              item,
+                                              'name',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px] font-semibold"
+                                        />
+                                      </td>
+                                      <td className="p-1.5">
+                                        <input
+                                          value={draft.room}
+                                          onChange={(e) =>
+                                            handleInlineFieldChange(
+                                              item,
+                                              'room',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px]"
+                                        />
+                                      </td>
+                                      <td className="p-1.5">
+                                        <input
+                                          value={draft.cool}
+                                          onChange={(e) =>
+                                            handleInlineFieldChange(
+                                              item,
+                                              'cool',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px]"
+                                        />
+                                      </td>
+                                      <td className="p-1.5">
+                                        <input
+                                          value={draft.freeze}
+                                          onChange={(e) =>
+                                            handleInlineFieldChange(
+                                              item,
+                                              'freeze',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px]"
+                                        />
+                                      </td>
+                                      <td className="p-1.5">
+                                        <input
+                                          value={draft.note}
+                                          onChange={(e) =>
+                                            handleInlineFieldChange(
+                                              item,
+                                              'note',
+                                              e.target.value
+                                            )
+                                          }
+                                          className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px]"
+                                        />
+                                      </td>
+                                      {customColumnsSorted.map((col) => (
+                                        <td key={col.id} className="p-1.5">
+                                          <input
+                                            value={draft.customFields?.[col.id] || ''}
+                                            onChange={(e) =>
+                                              handleInlineCustomFieldChange(
+                                                item,
+                                                col.id,
+                                                e.target.value
+                                              )
+                                            }
+                                            className="w-full h-8 rounded border border-[#D8D2C2] px-2 text-[12px]"
+                                          />
+                                        </td>
+                                      ))}
+                                      <td className="p-1.5 text-right whitespace-nowrap">
+                                        <div className="inline-flex items-center gap-1">
+                                          <button
+                                            type="button"
+                                            disabled={!isDirty}
+                                            onClick={() => void handleSaveInlineRow(code)}
+                                            className={`h-8 px-2.5 rounded font-bold text-[11.5px] ${
+                                              isDirty
+                                                ? 'bg-[#0F5E6E] text-white'
+                                                : 'bg-[#F2EFE8] text-[#9CA3AF]'
+                                            }`}
+                                          >
+                                            Lưu
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleMoveItemRow(item, -1)}
+                                            title="Di chuyển lên"
+                                            className="h-8 w-7 rounded border border-[#DFD9CB] bg-white flex items-center justify-center"
+                                          >
+                                            <ArrowUp size={12} />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleMoveItemRow(item, 1)}
+                                            title="Di chuyển xuống"
+                                            className="h-8 w-7 rounded border border-[#DFD9CB] bg-white flex items-center justify-center"
+                                          >
+                                            <ArrowDown size={12} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-[#EAE5DA] divide-y divide-[#EAE5DA] max-h-[420px] overflow-y-auto">
+                            {filteredCrudItems.map((item) => {
+                              const code = getItemCode(item);
+                              const isChecked = selectedCodes.includes(code);
+                              return (
+                                <div
+                                  key={code}
+                                  className={`p-3 flex items-center justify-between gap-2.5 hover:bg-[#FAF9F6] ${
+                                    isChecked ? 'bg-[#EEF6F8]/60' : ''
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        setSelectedCodes((prev) =>
+                                          e.target.checked
+                                            ? [...prev, code]
+                                            : prev.filter((c) => c !== code)
+                                        );
+                                      }}
+                                      className="mt-1 h-4 w-4 accent-[#122A47] shrink-0"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 text-[11.5px]">
+                                        <span className="font-mono font-bold text-[#8A6510]">
+                                          {code}
+                                        </span>
+                                        <span className="text-[#5C6573] truncate">
+                                          {item.g}
+                                        </span>
+                                      </div>
+                                      <p className="font-bold text-[13.5px] text-[#122A47] truncate">
+                                        {item.name}
+                                      </p>
+                                      <p className="text-[11.5px] text-[#5C6573] truncate">
+                                        Phòng: {item.room} · Lạnh: {item.cool} · Đông:{' '}
+                                        {item.freeze}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {hasPerm('edit_items') && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleMoveItemRow(item, -1)}
+                                          title="Di chuyển lên"
+                                          className="h-8 w-8 rounded-lg border border-[#DFD9CB] bg-white hover:border-[#1E4A75] text-[#475569] flex items-center justify-center"
+                                        >
+                                          <ArrowUp size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleMoveItemRow(item, 1)}
+                                          title="Di chuyển xuống"
+                                          className="h-8 w-8 rounded-lg border border-[#DFD9CB] bg-white hover:border-[#1E4A75] text-[#475569] flex items-center justify-center"
+                                        >
+                                          <ArrowDown size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleDuplicateItem(item)}
+                                          title="Nhân bản mặt hàng"
+                                          className="h-8 w-8 rounded-lg border border-[#DFD9CB] bg-white hover:border-[#1E4A75] text-[#1E4A75] flex items-center justify-center"
+                                        >
+                                          <Copy size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setIsAddingNew(false);
+                                            setEditingItem({
+                                              ...item,
+                                              customFields: {
+                                                ...(item.customFields || {}),
+                                              },
+                                            });
+                                          }}
+                                          className="h-8 px-2.5 rounded-lg border border-[#DFD9CB] bg-white hover:border-[#1E4A75] text-[#122A47] text-[12px] font-bold flex items-center gap-1"
+                                        >
+                                          <Edit3 size={13} />
+                                          <span className="hidden sm:inline">Sửa</span>
+                                        </button>
+                                      </>
+                                    )}
+                                    {hasPerm('delete_items') && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleDeleteItem(item)}
+                                        aria-label={`Xóa ${code}`}
+                                        className="h-8 w-8 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] hover:bg-[#FEE2E2] flex items-center justify-center"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <form
@@ -1125,10 +1966,10 @@ export function AdminPanel({
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Phụ lục
+                              Quy định áp dụng
                             </label>
                             <select
-                              disabled={!isAddingNew}
+                              disabled
                               value={editingItem.a}
                               onChange={(e) =>
                                 setEditingItem((p) =>
@@ -1139,9 +1980,7 @@ export function AdminPanel({
                               }
                               className="w-full h-10 rounded-lg border border-[#D8D2C2] bg-white px-2.5 text-[13px]"
                             >
-                              <option value="PL1">PL1 — Phụ lục 1</option>
-                              <option value="PL2">PL2 — Phụ lục 2</option>
-                              <option value="PL3">PL3 — Phụ lục 3</option>
+                              <option value="SHE">SHE — SHE-QĐ-FB13</option>
                             </select>
                           </div>
 
@@ -1165,10 +2004,10 @@ export function AdminPanel({
 
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Nhóm hàng
+                              Nhóm thực phẩm
                             </label>
                             <input
-                              list="bnc-groups-list"
+                              list="she-groups-list"
                               value={editingItem.g}
                               onChange={(e) =>
                                 setEditingItem((p) =>
@@ -1178,7 +2017,7 @@ export function AdminPanel({
                               required
                               className="w-full h-10 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[13px]"
                             />
-                            <datalist id="bnc-groups-list">
+                            <datalist id="she-groups-list">
                               {scopedGroups.map((g) => (
                                 <option key={g} value={g} />
                               ))}
@@ -1189,7 +2028,7 @@ export function AdminPanel({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Tên sản phẩm *
+                              Loại thực phẩm cụ thể *
                             </label>
                             <input
                               value={editingItem.name}
@@ -1213,7 +2052,7 @@ export function AdminPanel({
                                   p ? { ...p, standardTemp: e.target.value } : p
                                 )
                               }
-                              placeholder="Ví dụ: 1-4°C hoặc ≤ -18°C"
+                              placeholder="Ví dụ: 0–5°C hoặc ≤ −18°C"
                               className="w-full h-10 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[13px]"
                             />
                           </div>
@@ -1222,7 +2061,7 @@ export function AdminPanel({
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Nhiệt độ phòng
+                              Nhiệt độ phòng (15–25°C)
                             </label>
                             <input
                               value={editingItem.room}
@@ -1236,7 +2075,7 @@ export function AdminPanel({
                           </div>
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Kho mát (1-4°C)
+                              Nhiệt độ lạnh (0–5°C)
                             </label>
                             <input
                               value={editingItem.cool}
@@ -1250,7 +2089,7 @@ export function AdminPanel({
                           </div>
                           <div>
                             <label className="block text-[11.5px] font-bold text-[#2B3647] mb-1">
-                              Kho đông (≤ -18°C)
+                              Nhiệt độ đông (≤ −18°C)
                             </label>
                             <input
                               value={editingItem.freeze}
@@ -1349,6 +2188,41 @@ export function AdminPanel({
                           </div>
                         </div>
 
+                        {customColumnsSorted.length > 0 && (
+                          <div className="rounded-xl border border-[#D4E2EA] bg-white p-3 space-y-2">
+                            <p className="text-[11.5px] font-extrabold text-[#122A47]">
+                              Giá trị các Cột tùy chỉnh
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {customColumnsSorted.map((col) => (
+                                <div key={col.id}>
+                                  <label className="block text-[11px] font-bold text-[#2B3647] mb-1">
+                                    {col.label}
+                                  </label>
+                                  <input
+                                    value={editingItem.customFields?.[col.id] || ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setEditingItem((p) =>
+                                        p
+                                          ? {
+                                              ...p,
+                                              customFields: {
+                                                ...(p.customFields || {}),
+                                                [col.id]: v,
+                                              },
+                                            }
+                                          : p
+                                      );
+                                    }}
+                                    className="w-full h-9 rounded-lg border border-[#D8D2C2] px-3 text-[12.5px]"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="flex items-center gap-2 pt-1">
                           <button
                             type="submit"
@@ -1383,7 +2257,7 @@ export function AdminPanel({
                           Xuất toàn bộ dữ liệu (Export)
                         </h3>
                         <p className="text-[12.5px] text-[#5C6573]">
-                          Tải bản sao lưu đầy đủ để lưu trữ hoặc mở trực tiếp bằng Excel.
+                          Tải bản sao lưu đầy đủ (bao gồm cả thứ tự hàng &amp; cột tùy chỉnh) để lưu trữ hoặc mở bằng Excel.
                         </p>
                         <div className="flex flex-wrap gap-2.5">
                           <button
@@ -1491,7 +2365,6 @@ export function AdminPanel({
               {/* TAB 4: RBAC USERS & PASSWORD (SUPER ADMIN ONLY) */}
               {activeTab === 'users' && currentUser.role === 'super_admin' && (
                 <div className="space-y-5">
-                  {/* Change Super Admin Password */}
                   <form
                     onSubmit={(e) => void handleChangeSuperPassword(e)}
                     className="rounded-xl border border-[#EAE5DA] bg-[#FAF9F6] p-4 space-y-3"
@@ -1629,61 +2502,187 @@ export function AdminPanel({
                     </button>
                   </form>
 
-                  {/* Sub-users List */}
+                  {/* Sub-users List with Inline Permission / Lock Editor */}
                   <div className="rounded-xl border border-[#EAE5DA] divide-y divide-[#EAE5DA]">
-                    {usersList.map((u) => (
-                      <div
-                        key={u.id}
-                        className="p-3.5 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-[13.5px] font-bold text-[#122A47]">
-                            {u.username}{' '}
-                            <span className="text-[11px] font-semibold text-[#8A6510]">
-                              ·{' '}
-                              {u.role === 'super_admin'
-                                ? 'Super Admin (Toàn quyền)'
-                                : 'Sub-User'}
-                            </span>
-                          </p>
-                          <p className="text-[11.5px] text-[#5C6573] truncate">
-                            Quyền:{' '}
-                            {u.permissions
-                              .map((p) => permissionLabels[p])
-                              .join(', ')}
-                          </p>
-                          <p className="text-[11px] text-[#6B7280] truncate">
-                            Nhóm: {u.allowedGroups.join(', ')}
-                          </p>
+                    {usersList.map((u) => {
+                      const isEditing = editingUserId === u.id;
+                      return (
+                        <div key={u.id} className="p-3.5 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[13.5px] font-bold text-[#122A47] flex items-center gap-2">
+                                <span>{u.username}</span>
+                                <span className="text-[11px] font-semibold text-[#8A6510]">
+                                  ·{' '}
+                                  {u.role === 'super_admin'
+                                    ? 'Super Admin (Toàn quyền)'
+                                    : 'Sub-User'}
+                                </span>
+                                {u.disabled && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#FEE2E2] text-[#B91C1C] text-[10px] font-extrabold">
+                                    ĐÃ KHÓA
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[11.5px] text-[#5C6573] truncate">
+                                Quyền:{' '}
+                                {u.permissions
+                                  .map((p) => permissionLabels[p] || p)
+                                  .join(', ')}
+                              </p>
+                              <p className="text-[11px] text-[#6B7280] truncate">
+                                Nhóm: {u.allowedGroups.join(', ')}
+                              </p>
+                            </div>
+                            {u.role !== 'super_admin' && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    isEditing
+                                      ? setEditingUserId(null)
+                                      : startEditingSubUser(u)
+                                  }
+                                  className="h-9 px-3 rounded-lg border border-[#DFD9CB] bg-white text-[#122A47] text-[12px] font-bold flex items-center gap-1"
+                                >
+                                  <UserCog size={13} />
+                                  <span>{isEditing ? 'Đóng' : 'Sửa quyền'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteSubUser(u.id)}
+                                  className="h-9 px-3 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] text-[12px] font-bold"
+                                >
+                                  Xóa
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {isEditing && u.role !== 'super_admin' && (
+                            <div className="rounded-xl border border-[#D4E2EA] bg-[#F1F7FA] p-3.5 space-y-3 text-[12.5px]">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {ALL_PERMISSIONS.map((perm) => (
+                                  <label
+                                    key={perm}
+                                    className="flex items-center gap-2 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={editUserPerms.includes(perm)}
+                                      onChange={(e) =>
+                                        setEditUserPerms((prev) =>
+                                          e.target.checked
+                                            ? [...prev, perm]
+                                            : prev.filter((p) => p !== perm)
+                                        )
+                                      }
+                                      className="accent-[#122A47]"
+                                    />
+                                    <span>{permissionLabels[perm]}</span>
+                                  </label>
+                                ))}
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editUserAllGroups}
+                                    onChange={(e) =>
+                                      setEditUserAllGroups(e.target.checked)
+                                    }
+                                    className="accent-[#122A47]"
+                                  />
+                                  <span>Quản lý tất cả các nhóm thực phẩm</span>
+                                </label>
+                                {!editUserAllGroups && (
+                                  <div className="max-h-28 overflow-y-auto rounded-lg border border-[#D8D2C2] bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11.5px]">
+                                    {availableGroups.map((g) => (
+                                      <label
+                                        key={g}
+                                        className="flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={editUserGroups.includes(g)}
+                                          onChange={(e) =>
+                                            setEditUserGroups((prev) =>
+                                              e.target.checked
+                                                ? [...prev, g]
+                                                : prev.filter((x) => x !== g)
+                                            )
+                                          }
+                                          className="accent-[#122A47]"
+                                        />
+                                        <span className="truncate">{g}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+                                <input
+                                  type="password"
+                                  value={editUserNewPassword}
+                                  onChange={(e) =>
+                                    setEditUserNewPassword(e.target.value)
+                                  }
+                                  placeholder="Đổi mật khẩu mới (để trống = giữ nguyên)"
+                                  className="h-9 rounded-lg border border-[#D8D2C2] bg-white px-3 text-[12px]"
+                                />
+                                <label className="flex items-center gap-2 font-bold text-[#B91C1C] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editUserDisabled}
+                                    onChange={(e) =>
+                                      setEditUserDisabled(e.target.checked)
+                                    }
+                                    className="accent-[#B91C1C]"
+                                  />
+                                  <span>Tạm khóa tài khoản này</span>
+                                </label>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveEditedSubUser(u)}
+                                className="h-9 px-4 rounded-lg bg-[#122A47] text-white font-bold text-[12.5px]"
+                              >
+                                Lưu cập nhật tài khoản
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        {u.role !== 'super_admin' && (
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteSubUser(u.id)}
-                            className="h-9 px-3 rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#B91C1C] text-[12px] font-bold shrink-0"
-                          >
-                            Xóa
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
-              {/* TAB 5: CLOUD SYNC LAYER (SUPABASE ONLY) */}
+              {/* TAB 5: CLOUD SYNC LAYER (SUPABASE REALTIME) */}
               {activeTab === 'cloud' && (
                 <div className="rounded-xl border border-[#EAE5DA] bg-[#FAF9F6] p-4 space-y-4">
-                  <div className="flex items-center gap-2.5">
-                    <Cloud size={20} className="text-[#1E4A75]" />
-                    <div>
-                      <h3 className="text-[14.5px] font-extrabold text-[#122A47]">
-                        {L.cloudTitle}
-                      </h3>
-                      <p className="text-[12px] text-[#5C6573]">
-                        {L.cloudStatusLabel} <strong>{cloudStatus.label}</strong>
-                      </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <Cloud size={20} className="text-[#1E4A75]" />
+                      <div>
+                        <h3 className="text-[14.5px] font-extrabold text-[#122A47]">
+                          {L.cloudTitle}
+                        </h3>
+                        <p className="text-[12px] text-[#5C6573]">
+                          {L.cloudStatusLabel} <strong>{cloudStatus.label}</strong>
+                        </p>
+                      </div>
                     </div>
+
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11.5px] font-bold ${realtimeBadge.cls}`}
+                    >
+                      <Radio size={12} />
+                      <span>{realtimeBadge.label}</span>
+                    </span>
                   </div>
 
                   <p className="text-[12.5px] text-[#2B3647] leading-relaxed">
@@ -1698,7 +2697,7 @@ export function AdminPanel({
                           VITE_CLOUD_SYNC_PROVIDER
                         </label>
                         <input
-                          list="bnc-cloud-provider-options"
+                          list="she-cloud-provider-options"
                           value={cloudConfigDraft.VITE_CLOUD_SYNC_PROVIDER}
                           onChange={(e) =>
                             setCloudConfigDraft((p) => ({
@@ -1709,7 +2708,7 @@ export function AdminPanel({
                           placeholder="supabase"
                           className="w-full h-10 rounded-lg border border-[#D8D2C2] focus:border-[#1E4A75] px-3 font-mono text-[12.5px]"
                         />
-                        <datalist id="bnc-cloud-provider-options">
+                        <datalist id="she-cloud-provider-options">
                           <option value="supabase" />
                           <option value="none" />
                         </datalist>
@@ -1727,7 +2726,7 @@ export function AdminPanel({
                               VITE_SUPABASE_TABLE: e.target.value,
                             }))
                           }
-                          placeholder="bnc_food_catalog"
+                          placeholder="foods"
                           className="w-full h-10 rounded-lg border border-[#D8D2C2] focus:border-[#1E4A75] px-3 font-mono text-[12.5px]"
                         />
                       </div>
@@ -1767,6 +2766,22 @@ export function AdminPanel({
                       />
                     </div>
 
+                    <label className="flex items-center gap-2 text-[12.5px] font-bold text-[#122A47] cursor-pointer pt-1">
+                      <input
+                        type="checkbox"
+                        checked={configDraft.autoSyncCloud !== false}
+                        onChange={(e) => {
+                          const nextAuto = e.target.checked;
+                          setConfigDraft((p) => ({ ...p, autoSyncCloud: nextAuto }));
+                          void handleSaveConfig(undefined, { autoSyncCloud: nextAuto });
+                        }}
+                        className="h-4 w-4 accent-[#122A47]"
+                      />
+                      <span>
+                        Tự động đẩy lên Supabase ngay khi Admin thêm / sửa / xóa / khóa App
+                      </span>
+                    </label>
+
                     <div className="pt-1 flex flex-wrap items-center gap-2.5">
                       <button
                         type="button"
@@ -1780,6 +2795,21 @@ export function AdminPanel({
                       >
                         <Save size={14} />
                         <span>{L.cloudSaveBtn}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={cloudBusy}
+                        onClick={async () => {
+                          setCloudBusy(true);
+                          const res = await testSupabaseConnection(cloudConfigDraft);
+                          setCloudMessage(res.message);
+                          setCloudBusy(false);
+                        }}
+                        className="h-10 px-4 rounded-xl border border-[#DFD9CB] bg-[#FAF9F6] hover:border-[#1E4A75] text-[#122A47] text-[13px] font-bold flex items-center gap-1.5"
+                      >
+                        <Wifi size={14} />
+                        <span>{L.cloudTestBtn}</span>
                       </button>
                     </div>
                   </div>
@@ -1840,14 +2870,21 @@ export function AdminPanel({
 
                   <details className="rounded-xl border border-[#E2DDD0] bg-white p-3 text-[12px] text-[#2B3647]">
                     <summary className="font-bold text-[#122A47] cursor-pointer">
-                      SQL tạo bảng nhanh trên Supabase SQL Editor
+                      SQL cài đặt Bảng + Realtime trên Supabase SQL Editor
                     </summary>
                     <pre className="mt-2 overflow-x-auto rounded-lg bg-[#F6F4EF] p-2.5 font-mono text-[11px] text-[#182230]">
 {`create table if not exists ${cloudConfigDraft.VITE_SUPABASE_TABLE.trim() || 'foods'} (
   code text primary key,
   updated_at timestamptz default now(),
   payload jsonb not null
-);`}
+);
+
+alter table ${cloudConfigDraft.VITE_SUPABASE_TABLE.trim() || 'foods'} enable row level security;
+create policy "Allow anon read/write ${cloudConfigDraft.VITE_SUPABASE_TABLE.trim() || 'foods'}"
+  on ${cloudConfigDraft.VITE_SUPABASE_TABLE.trim() || 'foods'}
+  for all using (true) with check (true);
+
+alter publication supabase_realtime add table ${cloudConfigDraft.VITE_SUPABASE_TABLE.trim() || 'foods'};`}
                     </pre>
                   </details>
                 </div>

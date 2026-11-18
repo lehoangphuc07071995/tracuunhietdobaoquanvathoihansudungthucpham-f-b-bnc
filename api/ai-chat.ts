@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { FOOD_ITEMS, getItemCode } from '../src/data/foodData';
+import { serializeSheRegulationForAiPrompt } from '../src/data/sheRegulationData';
 import type { Lang } from '../src/types';
 
 const NOT_FOUND_RESPONSE =
@@ -14,15 +15,13 @@ interface CatalogEntry {
   room: string;
   cool: string;
   freeze: string;
-  displayCool?: string;
-  displayHot?: string;
-  weight?: string;
   standardTemp?: string;
   shelfLifeUnopened?: string;
   shelfLifeOpened?: string;
   packagingSpec?: string;
   note: string;
   haccpNote?: string;
+  customFields?: Record<string, string>;
 }
 
 interface HistoryTurn {
@@ -82,9 +81,6 @@ function serializeCatalog(rawCatalog: unknown): {
           room: item.room,
           cool: item.cool,
           freeze: item.freeze,
-          displayCool: item.displayCool || '',
-          displayHot: item.displayHot || '',
-          weight: item.weight || '',
           note: item.note,
           haccpNote: item.flag || '',
         }));
@@ -98,23 +94,21 @@ function serializeCatalog(rawCatalog: unknown): {
       item.g,
       item.name,
       item.enName || '',
-      `Room:${item.room}`,
-      `Cool(1-4C):${item.cool}`,
+      `Room(15-25C):${item.room}`,
+      `Cool(0-5C):${item.cool}`,
       `Freeze(<=-18C):${item.freeze}`,
     ];
-    if (item.displayCool && item.displayCool !== '—') {
-      parts.push(`DisplayCool:${item.displayCool}`);
-    }
-    if (item.displayHot && item.displayHot !== '—' && item.displayHot !== '-') {
-      parts.push(`DisplayHot:${item.displayHot}`);
-    }
-    if (item.weight) parts.push(`Weight:${item.weight}`);
     if (item.standardTemp) parts.push(`StdTemp:${item.standardTemp}`);
     if (item.shelfLifeUnopened) parts.push(`Unopened:${item.shelfLifeUnopened}`);
     if (item.shelfLifeOpened) parts.push(`Opened:${item.shelfLifeOpened}`);
     if (item.packagingSpec) parts.push(`Packaging:${item.packagingSpec}`);
     if (item.note && item.note !== '—') parts.push(`Note:${item.note}`);
     if (item.haccpNote) parts.push(`HACCP/QA:${item.haccpNote}`);
+    if (item.customFields && typeof item.customFields === 'object') {
+      for (const [k, v] of Object.entries(item.customFields)) {
+        if (v && String(v).trim()) parts.push(`${k}:${String(v).trim()}`);
+      }
+    }
     return parts.filter(Boolean).join(' | ');
   });
 
@@ -171,22 +165,25 @@ export default async function handler(req: VercelReq, res: ServerResponse) {
       },
     });
 
-    const systemInstruction = `You are the strict internal F&B QA/QC Compliance AI Assistant for Sun World Ba Na Hills (BNC).
+    const sheKnowledgeText = serializeSheRegulationForAiPrompt();
+    const systemInstruction = `You are the strict F&B Food Safety Compliance AI Assistant for Sun Group SHE Division, operating strictly on Quyết định 107/2026/QĐ-SHE/SG (Mã hiệu: SHE-QĐ-FB13, Phiên bản 00, Hiệu lực 12/11/2026).
 CRITICAL ANTI-HALLUCINATION PROTOCOL (MUST FOLLOW 100%):
-1. Ground EVERY fact strictly and exclusively on the INTERNAL DATABASE CATALOG below.
-2. NEVER guess, estimate, extrapolate, assume general culinary knowledge, or invent any temperature, duration, shelf life, opened/unopened rule, or product that is not explicitly written in the catalog below.
-3. Empty/dash cells ("—"): Keep "—". NEVER invent a duration for columns marked "—". When listing an item, use the concise format:
-   - [Code] Original Vietnamese Name
-     Nhiệt độ phòng: ... | 1-4°C: ... | ≤ -18°C: ... | Ghi chú: ...
-   (Translate labels like Room temp / 1-4°C / ≤ -18°C / Note into the question's language if EN/KO/HI, while ALWAYS keeping [Code] and the exact original Vietnamese product name.)
-4. Strict Vietnamese diacritics: NEVER confuse "bơ" (butter) with "bò" (beef), or "dứa" (pineapple) with "dừa" (coconut). If the user writes unaccented "bo" or "dua" ambiguously, do not guess—ask "Bạn ý là bơ hay bò?" or "Bạn ý là dứa hay dừa?" and list both groups.
-5. Multi-turn follow-up resolution: If the user asks a follow-up with pronouns or ellipsis ("cái đó", "nó", "món vừa rồi", "cái thứ 2", "that item", "room temp?"), resolve it ONLY from the Recent conversation AND verify every quoted figure against the INTERNAL DATABASE CATALOG.
-6. Missing or unsupported questions: If the requested product, ingredient, or specific question is NOT present in the catalog or lacks grounded evidence in the catalog, set notFound=true and set reply EXACTLY verbatim to:
+1. Ground EVERY fact exclusively in the OFFICIAL SHE-QĐ-FB13 CATALOG AND REGULATION KNOWLEDGE BASE below.
+2. NEVER guess, estimate, extrapolate, use outside culinary assumptions, or invent any temperature, duration, shelf life, or rule not explicitly written below.
+3. Preserve "Không", "Không cấp đông", "Theo NSX", and "—" EXACTLY. Never turn "Không" or "Không cấp đông" into a duration. When listing an item, use the concise format:
+   - [SHE-xx] Original Vietnamese Name
+     Phòng (15–25°C): ... | Lạnh (0–5°C): ... | Đông (≤ −18°C): ... | Lưu ý: ...
+   (Translate labels like Room / Chilled / Frozen / Note into the question's language if EN/KO/HI, while ALWAYS keeping [SHE-xx] and the original Vietnamese name.)
+4. Strict Vietnamese diacritics: NEVER confuse "bơ" (butter) with "bò" (beef), or "dứa" (pineapple) with "dừa" (coconut). If the user writes unaccented "bo" or "dua" ambiguously, do not guess—ask "Bạn ý là bơ hay bò?" or "Bạn ý là dứa hay dừa?" and list both options.
+5. Multi-turn follow-up resolution: If the user asks a follow-up ("cái đó", "nó", "món vừa rồi", "cái thứ 2", "that item", "freezing?"), resolve strictly from Recent conversation AND verify every figure against the SHE-QĐ-FB13 data below.
+6. Missing or unsupported questions: If the product, operational rule, or question is NOT present in SHE-QĐ-FB13 below, set notFound=true and set reply EXACTLY verbatim to:
 "${NOT_FOUND_RESPONSE}"
-7. Output Language & Style: Auto-detect the language of the user's question (${lang} fallback), reply concisely (max 5 items at a time) and end grounded answers with the legal note: "Bản trích lục không thay thế văn bản gốc. Khi có mâu thuẫn, ưu tiên văn bản gốc và khuyến cáo NSX trên bao bì." (or its equivalent in the question language). Keep matchedCodes aligned strictly with the cited items.
+7. Output Language & Style: Auto-detect the language of the user's question (${lang} fallback), cite exact codes [SHE-xx] and Articles/Sections (Điều 1–9), and end grounded answers with: "Bản trích lục tuân thủ Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13). Không thay thế văn bản gốc; khi có mâu thuẫn, ưu tiên văn bản gốc và khuyến cáo NSX trên bao bì." (or its equivalent in the question language). Keep matchedCodes aligned strictly with cited SHE-xx codes.
 
-INTERNAL DATABASE CATALOG:
-${catalogText}`;
+ACTIVE SHE DATABASE CATALOG (including any Admin updates):
+${catalogText}
+
+${sheKnowledgeText}`;
 
     const conversationContext = historyTurns
       .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
@@ -209,16 +206,16 @@ ${catalogText}`;
             reply: {
               type: Type.STRING,
               description:
-                'Concise bullet-point answer strictly grounded in catalog, or exact NOT_FOUND_RESPONSE when absent.',
+                'Concise bullet-point answer strictly grounded in SHE-QĐ-FB13, or exact NOT_FOUND_RESPONSE when absent.',
             },
             matchedCodes: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: 'Exact catalog item codes cited in the answer (max 15).',
+              description: 'Exact SHE-xx item codes cited in the answer (max 15).',
             },
             notFound: {
               type: Type.BOOLEAN,
-              description: 'True only when no grounded answer exists in the catalog.',
+              description: 'True only when no grounded answer exists in SHE-QĐ-FB13.',
             },
           },
           required: ['reply', 'matchedCodes', 'notFound'],

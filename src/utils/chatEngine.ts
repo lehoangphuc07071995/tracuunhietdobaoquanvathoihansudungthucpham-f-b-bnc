@@ -1,15 +1,42 @@
-import { getItemCode, hasCellValue, hasUseToday, isEmptyCell } from '../data/foodData';
+import {
+  getItemCode,
+  hasCellValue,
+  hasUseToday,
+  isEmptyCell,
+  isNoFreezeCell,
+} from '../data/foodData';
+import {
+  SHE_DOC_METADATA,
+  SHE_NO_FREEZE_ITEMS,
+  SHE_POLICY_SECTIONS,
+  type SheNoFreezeItem,
+  type ShePolicySection,
+} from '../data/sheRegulationData';
+import {
+  translateDuration,
+  translateGroup,
+  translateItemName,
+  translateItemNote,
+  translateNoFreezeItem,
+  translatePolicySection,
+} from '../data/translations';
 import type { AiChatTurn, FoodItem, Lang } from '../types';
 
-export type ChatIntentType = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'AMBIGUOUS';
+export type ChatIntentType =
+  | 'A'
+  | 'B'
+  | 'C'
+  | 'D'
+  | 'E'
+  | 'F'
+  | 'AMBIGUOUS'
+  | 'POLICY';
 
 export interface ChatPaginationState {
   codes: string[];
   offset: number;
   headingPrefix: string;
   includeDisclaimer: boolean;
-  includeDisplayLine: boolean;
-  emptyNoteText: string;
 }
 
 export interface PendingDisambiguation {
@@ -28,27 +55,28 @@ export interface ChatEngineResult {
 }
 
 const LEGAL_FOOTER: Record<Lang, string> = {
-  VI: 'Bản trích lục không thay thế văn bản gốc. Khi có mâu thuẫn, ưu tiên văn bản gốc và khuyến cáo NSX trên bao bì.',
-  EN: 'This excerpt does not replace the original document. In case of conflict, the issued original document and manufacturer packaging guidelines prevail.',
-  KO: '본 발췌문은 원본 문서를 대체하지 않습니다. 상충 시 발행된 원본 문서 및 포장의 제조사 권장 사항을 우선합니다.',
-  HI: 'यह अंश मूल दस्तावेज़ का स्थान नहीं लेता है। विरोधाभास की स्थिति में, मूल दस्तावेज़ और पैकेजिंग पर निर्माता के निर्देश मान्य होंगे।',
+  VI: 'Bản trích lục tuân thủ Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13). Không thay thế văn bản gốc; khi có mâu thuẫn, ưu tiên văn bản gốc và khuyến cáo NSX trên bao bì.',
+  EN: 'Excerpt complies with Decision 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13). Does not replace the official original; in case of conflict, the issued document and manufacturer instructions prevail.',
+  KO: '본 발췌문은 결정 107/2026/QĐ-SHE/SG(SHE-QĐ-FB13)를 준수합니다. 원본 문서를 대체하지 않으며, 상충 시 원본 문서 및 제조사 표시 기준이 우선합니다.',
+  HI: 'यह अंश निर्णय 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13) के अनुरूप है। यह मूल दस्तावेज़ का स्थान नहीं लेता; विरोधाभास की स्थिति में मूल दस्तावेज़ व निर्माता के निर्देश मान्य होंगे।',
 };
 
 export const OUT_OF_SCOPE_MSG: Record<Lang, string> = {
-  VI: 'Câu này ngoài dữ liệu hệ thống, vui lòng liên hệ Quản lý trực tiếp để được hướng dẫn.',
-  EN: 'This question is outside the system database; please contact your direct Manager for guidance.',
-  KO: '이 질문은 시스템 데이터 범위를 벗어났습니다. 담당 관리자에게 직접 문의해 주세요.',
-  HI: 'यह प्रश्न सिस्टम डेटा से बाहर है, कृपया मार्गदर्शन के लिए अपने सीधे प्रबंधक से संपर्क करें।',
+  VI: 'Câu này ngoài dữ liệu quy định SHE-QĐ-FB13, vui lòng liên hệ Quản lý trực tiếp hoặc Phòng QLCL / Bộ phận Ẩm thực Khối SHE để được hướng dẫn.',
+  EN: 'This question is outside the SHE-QĐ-FB13 database; please contact your direct Manager or Quality Control / Culinary Department (SHE) for guidance.',
+  KO: '이 질문은 SHE-QĐ-FB13 규정 데이터 범위를 벗어났습니다. 담당 관리자 또는 SHE 품질관리/조리 부서에 문의해 주세요.',
+  HI: 'यह प्रश्न SHE-QĐ-FB13 डेटा से बाहर है; कृपया अपने सीधे प्रबंधक या SHE गुणवत्ता नियंत्रण / पाक कला विभाग से संपर्क करें।',
 };
 
 const SYNONYM_PHRASES: Array<[RegExp, string]> = [
   [/\bbanh\s*m[iy]\b/g, 'banh mi'],
+  [/\bbanh\s*bao\b/g, 'banh bao'],
+  [/\bbanh\s*kem\b/g, 'banh kem'],
   [/\bso[\s-]*co[\s-]*la\b|\bsocola\b|\bchocolate\b|\bchocolat\b|\bchoco\b|\bcacao\b|\bcocoa\b/g, 'socola'],
-  [/\bpho[\s-]*mai\b|\bphomai\b|\bphomat\b|\bcheese\b|\bmascarpone\b|\bcheddar\b|\bmozzarell?a\b|\bparmesan\b/g, 'phomai'],
+  [/\bpho[\s-]*mai\b|\bphomai\b|\bphomat\b|\bcheese\b|\bmascarpone\b|\bcheddar\b|\bmozzarell?a\b|\bparmesan\b|\bricotta\b/g, 'phomai'],
   [/\bmilk\b/g, 'sua'],
   [/\bcondensed\s+milk\b/g, 'sua dac'],
   [/\bfresh\s+milk\b/g, 'sua tuoi'],
-  [/\bcroissant\b/g, 'sung bo'],
   [/\bbread\b|\bbaguette\b/g, 'banh mi'],
   [/\bpastry\b|\bpastries\b|\bcake\b/g, 'banh ngot'],
   [/\bice\s*cream\b|\bgelato\b/g, 'kem'],
@@ -57,19 +85,15 @@ const SYNONYM_PHRASES: Array<[RegExp, string]> = [
   [/\bseafood\b/g, 'hai san'],
   [/\bchicken\b/g, 'thit ga'],
   [/\bpork\b/g, 'thit heo'],
-  [/\bsyrup\b/g, 'siro'],
   [/\bcoffee\b|\bcafe\b/g, 'ca phe'],
   [/\begg(s)?\b/g, 'trung'],
-  [/\bsugar\b/g, 'duong'],
-  [/\bjam\b/g, 'mut'],
   [/\bflour\b/g, 'bot'],
   [/\byogurt\b|\byoghurt\b/g, 'sua chua'],
-  [/\btu\s*lanh\b|\btu\s*mat\b|\bkho\s*lanh\b|\bkho\s*mat\b|\bde\s*lanh\b|\bde\s*mat\b|\bbao\s*quan\s*lanh\b|\bbao\s*quan\s*mat\b|\b1\s*-\s*4\s*(?:do\s*c|c|°c)?\b|\b0\s*-\s*4\s*(?:do\s*c|c|°c)?\b|\bfridge\b|\bchilled\b|\bcooler\b/g, ' __COL_COOL__ '],
-  [/\btu\s*dong\b|\bkho\s*dong\b|\bcap\s*dong\b|\bdo\s*dong\b|\bde\s*dong\b|\bbao\s*quan\s*dong\b|\b-?\s*18\s*(?:do\s*c|c|°c)?\b|\bfreezer\b|\bfrozen\b/g, ' __COL_FREEZE__ '],
-  [/\bnhiet\s*do\s*phong\b|\bo\s*phong\b|\bnhiet\s*phong\b|\bnhiet\s*thuong\b|\bthuong\s*nhiet\b|\bde\s*ngoai\b|\broom\s*temp(?:erature)?\b|\bambient\b/g, ' __COL_ROOM__ '],
-  [/\btrung\s*bay\s*nong\b|\bhot\s*display\b|\b30\s*-\s*40\b/g, ' __COL_DHOT__ '],
-  [/\btrung\s*bay\s*lanh\b|\bcold\s*display\b/g, ' __COL_DCOOL__ '],
-  [/\bdung\s*trong\s*ngay\b|\bsu\s*dung\s*trong\s*ngay\b|\btrong\s*ngay\b|\buse\s*(?:within\s*)?today\b/g, ' __COL_TODAY__ '],
+  [/\bkhong\s*(?:duoc\s*)?cap\s*dong\b|\bkhong\s*nen\s*cap\s*dong\b|\bno\s*freeze\b|\bdo\s*not\s*freeze\b/g, ' __COL_NOFREEZE__ '],
+  [/\btu\s*lanh\b|\btu\s*mat\b|\bkho\s*lanh\b|\bkho\s*mat\b|\bde\s*lanh\b|\bde\s*mat\b|\bbao\s*quan\s*lanh\b|\bbao\s*quan\s*mat\b|\bnhiet\s*do\s*lanh\b|\b0\s*[-–]\s*5\s*(?:do\s*c|c|°c)?\b|\b1\s*[-–]\s*4\s*(?:do\s*c|c|°c)?\b|\bfridge\b|\bchilled\b|\bcooler\b/g, ' __COL_COOL__ '],
+  [/\btu\s*dong\b|\bkho\s*dong\b|\bcap\s*dong\b|\bdo\s*dong\b|\bde\s*dong\b|\bbao\s*quan\s*dong\b|\bnhiet\s*do\s*dong\b|\b-?\s*18\s*(?:do\s*c|c|°c)?\b|\bfreezer\b|\bfrozen\b/g, ' __COL_FREEZE__ '],
+  [/\bnhiet\s*do\s*phong\b|\bo\s*phong\b|\bnhiet\s*phong\b|\bnhiet\s*thuong\b|\bthuong\s*nhiet\b|\bde\s*ngoai\b|\b15\s*[-–]\s*25\s*(?:do\s*c|c|°c)?\b|\broom\s*temp(?:erature)?\b|\bambient\b/g, ' __COL_ROOM__ '],
+  [/\bdung\s*trong\s*ngay\b|\bsu\s*dung\s*trong\s*ngay\b|\btrong\s*ngay\b|\btheo\s*gio\b|\buse\s*(?:within\s*)?today\b/g, ' __COL_TODAY__ '],
 ];
 
 const NOISE_PHRASES: RegExp[] = [
@@ -100,6 +124,7 @@ const NOISE_PHRASES: RegExp[] = [
   /\bla\s+gi\b/g,
   /\bluu\s+tru\b/g,
   /\bsan\s+pham\b/g,
+  /\bthuc\s+pham\b/g,
   /\bnhung\s+mon\s+nao\b/g,
   /\bcac\s+mon\b/g,
   /\bnhung\s+mon\b/g,
@@ -115,7 +140,6 @@ const NOISE_PHRASES: RegExp[] = [
   /\bmo\s+nap\b/g,
   /\bde\s+duoc\b/g,
   /\bo\s+dau\b/g,
-  /\btrung\s+bay\b/g,
   /\bhow\s+long\b/g,
   /\bhow\s+many\b/g,
   /\bhow\s+should\b/g,
@@ -135,7 +159,7 @@ const NOISE_WORDS = new Set([
   'tuan', 'nam', 'nha', 'nhe', 'a', 'hsd', 'temp', 'temperature', 'storage',
   'store', 'stored', 'keep', 'kept', 'item', 'items', 'product', 'products',
   'what', 'which', 'how', 'are', 'is', 'in', 'on', 'at', 'for', 'the', 'be',
-  'can', 'do', 'does', 'days', 'hours', 'months',
+  'can', 'do', 'does', 'days', 'hours', 'months', 'why', 'tai', 'sao',
 ]);
 
 export function normVN(s: string): string {
@@ -145,7 +169,7 @@ export function normVN(s: string): string {
     .replace(/đ/g, 'd')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\bpl\s*([123])\s*[-_\s]*0*(\d{1,2})\b/g, (_, a, n) => `pl${a}-${String(Number(n)).padStart(2, '0')}`)
+    .replace(/\bshe\s*[-_\s]*0*(\d{1,2})\b/g, (_, n) => `she-${String(Number(n)).padStart(2, '0')}`)
     .replace(/([a-z])-([a-z])/g, '$1 $2')
     .replace(/[^a-z0-9\s\-_°≤≥]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -175,18 +199,21 @@ function hasUnicodeWord(raw: string, wordWithAccent: string): boolean {
 export function detectQuestionLang(question: string, uiLang: Lang): Lang {
   if (/[\uAC00-\uD7AF]/.test(question)) return 'KO';
   if (/[\u0900-\u097F]/.test(question)) return 'HI';
-  const hasViDiacritics = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(question);
+  const qWithoutDocCodes = question.replace(/SHE-QĐ-FB13|QĐ-SHE\/SG|QĐ-SHE|QĐ/gi, ' ');
+  const hasViDiacritics = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(
+    qWithoutDocCodes
+  );
   if (hasViDiacritics) return 'VI';
-  const lower = question.toLowerCase();
+  const lower = qWithoutDocCodes.toLowerCase();
   if (
-    /\b(how|what|which|many|long|compare|between|store|stored|storage|fridge|freezer|room|bread|milk|butter|beef|show\s+more|first|second|next)\b/.test(
+    /\b(how|what|which|many|long|compare|between|store|stored|storage|fridge|freezer|room|bread|milk|butter|beef|show\s+more|see\s+more|first|second|next|thaw|thawing|defrost|cool|cooling|reheat|procedure|procedures|article|cannot|frozen|unlisted|label|labeling)\b/.test(
       lower
     )
   ) {
     return 'EN';
   }
   if (
-    /\b(banh|sua|thit|bo|dua|bao|nhiet|nhieu|mon|xem|them|dong|mat|lanh|phong|sanh|lau|ngay|gio|pl[123])\b/.test(
+    /\b(banh|sua|thit|bo|dua|bao|nhiet|nhieu|mon|xem|them|dong|mat|lanh|phong|sanh|lau|ngay|gio|she-\d+)\b/.test(
       lower
     )
   ) {
@@ -195,30 +222,20 @@ export function detectQuestionLang(question: string, uiLang: Lang): Lang {
   return uiLang;
 }
 
+type ColFilterType = 'room' | 'cool' | 'freeze' | 'noFreeze' | 'today' | null;
+
 function extractCleanKeyword(rawQuestion: string): {
   cleaned: string;
   tokens: string[];
-  colFilter: 'room' | 'cool' | 'freeze' | 'displayHot' | 'displayCool' | 'today' | null;
-  asksDisplay: boolean;
+  colFilter: ColFilterType;
 } {
   let text = normVN(rawQuestion);
-  const asksDisplay =
-    text.includes('__COL_DHOT__') ||
-    text.includes('__COL_DCOOL__') ||
-    /\btrung\s*bay\b|\bdisplay\b/.test(
-      rawQuestion
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/đ/g, 'd')
-    );
 
-  let colFilter: 'room' | 'cool' | 'freeze' | 'displayHot' | 'displayCool' | 'today' | null = null;
-  if (text.includes('__COL_ROOM__')) colFilter = 'room';
+  let colFilter: ColFilterType = null;
+  if (text.includes('__COL_NOFREEZE__')) colFilter = 'noFreeze';
+  else if (text.includes('__COL_ROOM__')) colFilter = 'room';
   else if (text.includes('__COL_COOL__')) colFilter = 'cool';
   else if (text.includes('__COL_FREEZE__')) colFilter = 'freeze';
-  else if (text.includes('__COL_DHOT__')) colFilter = 'displayHot';
-  else if (text.includes('__COL_DCOOL__')) colFilter = 'displayCool';
   else if (text.includes('__COL_TODAY__')) colFilter = 'today';
 
   text = text.replace(/__col_[a-z]+__/gi, ' ');
@@ -232,56 +249,46 @@ function extractCleanKeyword(rawQuestion: string): {
     .filter((t) => t.length > 0 && !NOISE_WORDS.has(t));
 
   const cleaned = rawTokens.join(' ').trim();
-  return { cleaned, tokens: rawTokens, colFilter, asksDisplay };
+  return { cleaned, tokens: rawTokens, colFilter };
 }
 
-function formatSingleItemBlock(item: FoodItem, asksDisplay: boolean): string {
-  const code = getItemCode(item);
-  const room = hasCellValue(item.room) ? item.room : '—';
-  const cool = hasCellValue(item.cool) ? item.cool : '—';
-  const freeze = hasCellValue(item.freeze) ? item.freeze : '—';
-  const note = isEmptyCell(item.note) ? '—' : item.note;
-
-  const lines = [
-    `- [${code}] ${item.name}`,
-    `  Nhiệt độ phòng: ${room} | 1-4°C: ${cool} | ≤ -18°C: ${freeze} | Ghi chú: ${note}`,
-  ];
-
-  if (item.a === 'PL3' && asksDisplay) {
-    const dc = item.displayCool && !isEmptyCell(item.displayCool) ? item.displayCool : '—';
-    const dh = item.displayHot && !isEmptyCell(item.displayHot) ? item.displayHot : '—';
-    lines.push(`  Tủ trưng bày lạnh: ${dc} | Tủ trưng bày nóng: ${dh}`);
-  }
-  return lines.join('\n');
+function formatCellDisplay(val: string, lang: Lang): string {
+  if (!val || isEmptyCell(val)) return '—';
+  return translateDuration(val, lang);
 }
 
-function formatLocalizedItemBlock(item: FoodItem, lang: Lang, asksDisplay: boolean): string {
-  if (lang === 'VI') {
-    return formatSingleItemBlock(item, asksDisplay);
-  }
+function formatLocalizedItemBlock(item: FoodItem, lang: Lang): string {
   const code = getItemCode(item);
-  const room = hasCellValue(item.room) ? item.room : '—';
-  const cool = hasCellValue(item.cool) ? item.cool : '—';
-  const freeze = hasCellValue(item.freeze) ? item.freeze : '—';
-  const note = isEmptyCell(item.note) ? '—' : item.note;
+  const name = lang === 'VI' ? item.name : `${item.name} (${translateItemName(item, lang)})`;
+  const room = formatCellDisplay(item.room, lang);
+  const cool = formatCellDisplay(item.cool, lang);
+  const freeze = formatCellDisplay(item.freeze, lang);
+  const note = isEmptyCell(item.note) ? '—' : translateItemNote(item, lang);
 
   const lbl =
     lang === 'EN'
-      ? { r: 'Room temp', c: '1-4°C', f: '≤ -18°C', n: 'Note', dc: 'Cold display', dh: 'Hot display' }
+      ? { r: 'Room (15–25°C)', c: 'Chilled (0–5°C)', f: 'Frozen (≤ −18°C)', n: 'Note' }
       : lang === 'KO'
-        ? { r: '상온', c: '1-4°C', f: '≤ -18°C', n: '비고', dc: '전시 냉장', dh: '전시 온장' }
-        : { r: 'कमरे का तापमान', c: '1-4°C', f: '≤ -18°C', n: 'नोट', dc: 'कोल्ड डिस्प्ले', dh: 'हॉट डिस्प्ले' };
+        ? { r: '상온(15–25°C)', c: '냉장(0–5°C)', f: '냉동(≤ −18°C)', n: '비고' }
+        : lang === 'HI'
+          ? { r: 'कमरा (15–25°C)', c: 'ठंडा (0–5°C)', f: 'फ़्रीज़ (≤ −18°C)', n: 'नोट' }
+          : { r: 'Phòng (15–25°C)', c: 'Lạnh (0–5°C)', f: 'Đông (≤ −18°C)', n: 'Lưu ý' };
 
-  const lines = [
-    `- [${code}] ${item.name}`,
-    `  ${lbl.r}: ${room} | ${lbl.c}: ${cool} | ${lbl.f}: ${freeze} | ${lbl.n}: ${note}`,
-  ];
-  if (item.a === 'PL3' && asksDisplay) {
-    const dc = item.displayCool && !isEmptyCell(item.displayCool) ? item.displayCool : '—';
-    const dh = item.displayHot && !isEmptyCell(item.displayHot) ? item.displayHot : '—';
-    lines.push(`  ${lbl.dc}: ${dc} | ${lbl.dh}: ${dh}`);
-  }
-  return lines.join('\n');
+  const customParts = item.customFields
+    ? Object.entries(item.customFields)
+        .filter(([, val]) => val && val.trim())
+        .map(([k, val]) => `${k}: ${val}`)
+    : [];
+
+  const line2 = [
+    `${lbl.r}: ${room}`,
+    `${lbl.c}: ${cool}`,
+    `${lbl.f}: ${freeze}`,
+    `${lbl.n}: ${note}`,
+    ...customParts,
+  ].join(' | ');
+
+  return [`- [${code}] ${name}`, `  ${line2}`].join('\n');
 }
 
 export function formatPaginatedReply(
@@ -292,9 +299,9 @@ export function formatPaginatedReply(
   const pageSize = 5;
   const sliceCodes = pagination.codes.slice(pagination.offset, pagination.offset + pageSize);
   const blocks = sliceCodes
-    .map((code) => itemsMap.get(code))
+    .map((code) => itemsMap.get(code.toUpperCase()))
     .filter((it): it is FoodItem => Boolean(it))
-    .map((it) => formatLocalizedItemBlock(it, lang, pagination.includeDisplayLine));
+    .map((it) => formatLocalizedItemBlock(it, lang));
 
   const nextOffset = pagination.offset + sliceCodes.length;
   const remaining = pagination.codes.length - nextOffset;
@@ -341,7 +348,10 @@ function parseMaxDurationHours(val: string): number {
   const rawNorm = normVN(val);
   if (rawNorm.includes('__COL_TODAY__') || rawNorm.includes('trong ngay')) return 24;
   const s = normNameForCompare(val);
-  if (s.includes('nsx')) return 24 * 365;
+  if (s.includes('theo nsx')) {
+    const dayBound = s.match(/toi\s+da\s+(\d+)\s*ngay/);
+    return dayBound ? Number(dayBound[1]) * 24 : 24 * 365;
+  }
   let maxHours = 0;
   const matches = s.matchAll(/(\d+(?:[.,]\d+)?)\s*(tieng|gio|h|ngay|day|days|tuan|week|thang|month|nam|year)/g);
   for (const m of matches) {
@@ -352,7 +362,7 @@ function parseMaxDurationHours(val: string): number {
     if (unit === 'ngay' || unit.startsWith('day')) hours = num * 24;
     else if (unit === 'tuan' || unit === 'week') hours = num * 24 * 7;
     else if (unit === 'thang' || unit.startsWith('month')) hours = num * 24 * 30;
-    else if (unit === 'nam' || unit === 'year') hours = num * 24 * 365;
+    else if (unit === 'nam' || unit.startsWith('year')) hours = num * 24 * 365;
     if (hours > maxHours) maxHours = hours;
   }
   return maxHours;
@@ -374,13 +384,13 @@ function getStrictDairyMeatFlags(rawQuestion: string) {
     !hasButterAccent &&
     !hasBeefAccent &&
     /\bbo\b/.test(noAccent) &&
-    !/\bsung\s+bo\b|\bbo\s+toi\b|\bbo\s+dau\s+phong\b|\bthit\s+bo\b|\bsot\s+thit\s+bo\b|\bsot\s+bo\b/.test(noAccent);
+    !/\bsung\s+bo\b|\bbo\s+toi\b|\bbap\s+rang\s+bo\b|\bthit\s+bo\b|\bsot\s+bo\b|\bqua\s+bo\b/.test(noAccent);
 
   const hasBareDua =
     !hasPineappleAccent &&
     !hasCoconutAccent &&
     /\bdua\b/.test(noAccent) &&
-    !/\bcot\s+dua\b|\bkem\s+dua\b|\bdua\s+hau\b/.test(noAccent);
+    !/\bcot\s+dua\b|\bnuoc\s+dua\b|\bdua\s+hau\b/.test(noAccent);
 
   return {
     hasButterAccent,
@@ -392,21 +402,25 @@ function getStrictDairyMeatFlags(rawQuestion: string) {
   };
 }
 
+function getItemSearchableText(item: FoodItem): string {
+  return `${item.name} ${item.g} ${(item.keywords || []).join(' ')}`;
+}
+
 function violatesStrictDiacriticFilter(
   item: FoodItem,
   flags: ReturnType<typeof getStrictDairyMeatFlags>
 ): boolean {
-  const text = `${item.name} ${item.g}`;
-  if (flags.hasButterAccent && hasUnicodeWord(text, 'bò') && !hasUnicodeWord(item.name, 'bơ')) {
+  const text = getItemSearchableText(item);
+  if (flags.hasButterAccent && !flags.hasBeefAccent && hasUnicodeWord(text, 'bò') && !hasUnicodeWord(text, 'bơ')) {
     return true;
   }
-  if (flags.hasBeefAccent && hasUnicodeWord(item.name, 'bơ') && !hasUnicodeWord(item.name, 'bò')) {
+  if (flags.hasBeefAccent && !flags.hasButterAccent && hasUnicodeWord(text, 'bơ') && !hasUnicodeWord(text, 'bò')) {
     return true;
   }
-  if (flags.hasPineappleAccent && hasUnicodeWord(text, 'dừa') && !hasUnicodeWord(text, 'dứa')) {
+  if (flags.hasPineappleAccent && !flags.hasCoconutAccent && hasUnicodeWord(text, 'dừa') && !hasUnicodeWord(text, 'dứa')) {
     return true;
   }
-  if (flags.hasCoconutAccent && hasUnicodeWord(text, 'dứa') && !hasUnicodeWord(text, 'dừa')) {
+  if (flags.hasCoconutAccent && !flags.hasPineappleAccent && hasUnicodeWord(text, 'dứa') && !hasUnicodeWord(text, 'dừa')) {
     return true;
   }
   return false;
@@ -422,33 +436,51 @@ function scoreItemsForKeyword(
 
   const flags = getStrictDairyMeatFlags(rawQuestion);
   const scored: Array<{ item: FoodItem; score: number }> = [];
+  const headFallbackScored: Array<{ item: FoodItem; score: number }> = [];
+  const genericWords = new Set(['cac', 'loai', 'do', 'thuc', 'pham', 'che', 'bien', 'khong', 'co', 'da', 'chua', 'moi']);
 
   for (const item of items) {
     if (violatesStrictDiacriticFilter(item, flags)) continue;
 
-    // Additional strict exclusion when user explicitly typed "bơ" / "bò" / "dứa" / "dừa"
+    const fullTextRaw = getItemSearchableText(item);
     if (
       flags.hasButterAccent &&
-      !hasUnicodeWord(item.name, 'bơ') &&
-      !hasUnicodeWord(item.name, 'butter')
+      !flags.hasBeefAccent &&
+      !hasUnicodeWord(fullTextRaw, 'bơ') &&
+      !hasUnicodeWord(item.enName || '', 'butter')
     ) {
       continue;
     }
-    if (flags.hasBeefAccent && !hasUnicodeWord(item.name, 'bò')) {
+    if (flags.hasBeefAccent && !flags.hasButterAccent && !hasUnicodeWord(fullTextRaw, 'bò')) {
       continue;
     }
-    if (flags.hasPineappleAccent && !hasUnicodeWord(item.name, 'dứa')) {
+    if (flags.hasPineappleAccent && !flags.hasCoconutAccent && !hasUnicodeWord(fullTextRaw, 'dứa')) {
       continue;
     }
-    if (flags.hasCoconutAccent && !hasUnicodeWord(item.name, 'dừa')) {
+    if (flags.hasCoconutAccent && !flags.hasPineappleAccent && !hasUnicodeWord(fullTextRaw, 'dừa')) {
       continue;
     }
 
-    const nameNorm = normNameForCompare(item.name);
-    const enNorm = normNameForCompare(item.enName || '');
-    const groupNorm = normNameForCompare(item.g);
-    const fullPool = `${nameNorm} ${enNorm} ${groupNorm}`.trim();
+    const queryHasKhong = tokens.includes('khong');
+    const positiveItemName = queryHasKhong
+      ? item.name
+      : item.name.replace(/\(\s*không[^)]*\)/gi, ' ');
+    const enTranslated = translateItemName(item, 'EN');
+    const customText = item.customFields
+      ? Object.values(item.customFields).join(' ')
+      : '';
+    const nameNorm = normNameForCompare(positiveItemName);
+    const enNorm = normNameForCompare(`${enTranslated} ${item.enName || ''}`);
+    const groupNorm = normNameForCompare(`${item.g} ${translateGroup(item.g, 'EN')}`);
+    const kwNorm = normNameForCompare(`${(item.keywords || []).join(' ')} ${customText}`);
+    const fullPool = `${nameNorm} ${enNorm} ${kwNorm} ${groupNorm}`.trim();
     const fullTokens = fullPool.split(/\s+/).filter(Boolean);
+
+    const containsWholePhrase = (haystack: string, needle: string): boolean => {
+      if (!haystack || !needle) return false;
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`).test(haystack);
+    };
 
     let score = 0;
 
@@ -456,26 +488,34 @@ function scoreItemsForKeyword(
       score += 500;
     } else if (nameNorm === `cac loai ${cleanedKeyword}`) {
       score += 420;
-    } else if (nameNorm.includes(cleanedKeyword)) {
-      score += 320;
-    } else if (enNorm && enNorm.includes(cleanedKeyword)) {
+    } else if (containsWholePhrase(nameNorm, cleanedKeyword) || (cleanedKeyword.length >= 5 && nameNorm.includes(cleanedKeyword))) {
+      score += 340;
+    } else if (kwNorm && (containsWholePhrase(kwNorm, cleanedKeyword) || (cleanedKeyword.length >= 5 && kwNorm.includes(cleanedKeyword)))) {
+      score += 290;
+    } else if (enNorm && containsWholePhrase(enNorm, cleanedKeyword)) {
       score += 270;
-    } else if (groupNorm.includes(cleanedKeyword)) {
+    } else if (containsWholePhrase(groupNorm, cleanedKeyword)) {
       score += 210;
     } else {
       const nameTokenList = nameNorm.split(/\s+/).filter(Boolean);
+      const kwTokenList = `${nameNorm} ${kwNorm}`.split(/\s+/).filter(Boolean);
       const enTokenList = enNorm.split(/\s+/).filter(Boolean);
       const tokenMatchesWord = (word: string, tk: string) =>
         word === tk || (tk.length >= 4 && word.startsWith(tk));
       const nameHits = tokens.filter((tk) =>
         nameTokenList.some((nt) => tokenMatchesWord(nt, tk))
       ).length;
+      const nameAndKwHits = tokens.filter((tk) =>
+        kwTokenList.some((nt) => tokenMatchesWord(nt, tk))
+      ).length;
       const allPoolHits = tokens.filter((tk) =>
         fullTokens.some((ft) => tokenMatchesWord(ft, tk))
       ).length;
 
       if (nameHits === tokens.length) {
-        score += 240;
+        score += 250;
+      } else if (nameAndKwHits === tokens.length) {
+        score += 220;
       } else if (allPoolHits === tokens.length) {
         score += 180;
       } else if (
@@ -484,24 +524,103 @@ function scoreItemsForKeyword(
         enTokenList.some((et) => et === tokens[0])
       ) {
         score += 170;
+      } else if (
+        tokens.length >= 2 &&
+        nameAndKwHits >= 1 &&
+        allPoolHits >= Math.max(2, Math.ceil(tokens.length * 0.6))
+      ) {
+        score += 110 + allPoolHits * 15;
       }
     }
 
     if (score > 0) {
-      // Tie-breaker: PL1 before PL2 before PL3, mild preference for concise names
-      const appendixBonus = item.a === 'PL1' ? 30 : item.a === 'PL2' ? 20 : 10;
-      const lengthBonus = Math.max(0, 8 - Math.floor(item.name.length / 15));
-      scored.push({ item, score: score + appendixBonus + lengthBonus });
+      const lengthBonus = Math.max(0, 8 - Math.floor(item.name.length / 18));
+      scored.push({ item, score: score + lengthBonus });
+    } else if (tokens.length >= 2) {
+      const headWords = nameNorm.split(/\s+/).filter((w) => w && !genericWords.has(w));
+      const kwExactList = (item.keywords || []).map((k) => normNameForCompare(k));
+      const matchedHead = tokens.some(
+        (tk) =>
+          tk.length >= 2 &&
+          !genericWords.has(tk) &&
+          (headWords[0] === tk || kwExactList.includes(tk))
+      );
+      if (matchedHead) {
+        headFallbackScored.push({ item, score: 85 });
+      }
     }
   }
 
-  scored.sort((a, b) => {
+  const results = scored.length > 0 ? scored : headFallbackScored;
+  results.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    if (a.item.a !== b.item.a) return a.item.a < b.item.a ? -1 : 1;
-    return a.item.n - b.item.n;
+    return (a.item.order ?? a.item.n) - (b.item.order ?? b.item.n);
   });
 
-  return scored;
+  return results;
+}
+
+function scoreSheNoFreezeItems(
+  cleanedKeyword: string,
+  tokens: string[],
+  rawQuestion: string
+): Array<{ nf: SheNoFreezeItem; idx: number }> {
+  if (!cleanedKeyword || tokens.length === 0) return [];
+  const flags = getStrictDairyMeatFlags(rawQuestion);
+  const matched: Array<{ nf: SheNoFreezeItem; idx: number }> = [];
+  const escapedPhrase = cleanedKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const phraseRegex = new RegExp(`(?:^|\\s)${escapedPhrase}(?=\\s|$)`);
+
+  SHE_NO_FREEZE_ITEMS.forEach((nf, idx) => {
+    const rawDetail = `${nf.group} ${nf.detail}`;
+    if (flags.hasBeefAccent && !flags.hasButterAccent && hasUnicodeWord(rawDetail, 'bơ')) {
+      return;
+    }
+    if (flags.hasButterAccent && !flags.hasBeefAccent && hasUnicodeWord(rawDetail, 'bò')) {
+      return;
+    }
+    if (flags.hasCoconutAccent && !flags.hasPineappleAccent && hasUnicodeWord(rawDetail, 'dứa')) {
+      return;
+    }
+    if (flags.hasPineappleAccent && !flags.hasCoconutAccent && hasUnicodeWord(rawDetail, 'dừa')) {
+      return;
+    }
+    const textNorm = normNameForCompare(
+      `${nf.group} ${nf.detail} ${(nf.keywords || []).join(' ')}`
+    ).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const words = textNorm.split(/\s+/).filter(Boolean);
+    if (phraseRegex.test(textNorm)) {
+      matched.push({ nf, idx });
+      return;
+    }
+    const allHit = tokens.every((tk) =>
+      words.some((w) => w === tk || (tk.length >= 4 && w.startsWith(tk)))
+    );
+    if (allHit) {
+      matched.push({ nf, idx });
+    }
+  });
+  return matched;
+}
+
+function formatSheNoFreezeCallout(
+  matches: Array<{ nf: SheNoFreezeItem; idx: number }>,
+  lang: Lang
+): string {
+  if (matches.length === 0) return '';
+  const title =
+    lang === 'EN'
+      ? `Article 8 (${SHE_DOC_METADATA.docCode}) — Foods NOT allowed to freeze:`
+      : lang === 'KO'
+        ? `제8조 (${SHE_DOC_METADATA.docCode}) — 냉동 보관 금지 식품 안내:`
+        : lang === 'HI'
+          ? `अनुच्छेद 8 (${SHE_DOC_METADATA.docCode}) — फ़्रीज़ न किए जाने वाले खाद्य पदार्थ:`
+          : `Lưu ý Điều 8 (${SHE_DOC_METADATA.docCode}) — Thực phẩm KHÔNG cấp đông:`;
+  const lines = matches.map(({ nf, idx }) => {
+    const loc = translateNoFreezeItem(nf, idx, lang);
+    return `- ${loc.group} (${loc.detail}): ${loc.reason}`;
+  });
+  return `${title}\n${lines.join('\n')}`;
 }
 
 function levenshtein(a: string, b: string): number {
@@ -534,10 +653,11 @@ export function findNearestItemsAndGroups(
   const scored: Array<{ item: FoodItem; sim: number }> = [];
   for (const item of items) {
     const nameNorm = normNameForCompare(item.name);
-    const enNorm = normNameForCompare(item.enName || '');
-    const groupNorm = normNameForCompare(item.g);
-    const nameWords = nameNorm.split(/\s+/).filter(Boolean);
-    const poolWords = `${nameNorm} ${enNorm} ${groupNorm}`.split(/\s+/).filter(Boolean);
+    const enNorm = normNameForCompare(`${translateItemName(item, 'EN')} ${item.enName || ''}`);
+    const kwNorm = normNameForCompare((item.keywords || []).join(' '));
+    const groupNorm = normNameForCompare(`${item.g} ${translateGroup(item.g, 'EN')}`);
+    const nameWords = `${nameNorm} ${kwNorm}`.split(/\s+/).filter(Boolean);
+    const poolWords = `${nameNorm} ${enNorm} ${kwNorm} ${groupNorm}`.split(/\s+/).filter(Boolean);
 
     let sim = 0;
     for (const qt of tokens) {
@@ -568,7 +688,7 @@ export function findNearestItemsAndGroups(
 
   scored.sort((a, b) => {
     if (b.sim !== a.sim) return b.sim - a.sim;
-    return a.item.a === b.item.a ? a.item.n - b.item.n : a.item.a < b.item.a ? -1 : 1;
+    return a.item.n - b.item.n;
   });
 
   const nearestItems = scored.slice(0, 3).map((x) => x.item);
@@ -593,15 +713,25 @@ function buildDisambiguationReply(
 ): { reply: string; matchedCodes: string[] } {
   if (type === 'bo') {
     const butterItems = items
-      .filter((it) => hasUnicodeWord(it.name, 'bơ') || hasUnicodeWord(it.name, 'butter'))
+      .filter((it) => {
+        const txt = getItemSearchableText(it);
+        return hasUnicodeWord(txt, 'bơ') || hasUnicodeWord(it.enName || '', 'butter');
+      })
       .slice(0, 4);
     const beefItems = items
-      .filter((it) => hasUnicodeWord(it.name, 'bò') && !normNameForCompare(it.name).includes('sung bo'))
+      .filter((it) => {
+        const txt = getItemSearchableText(it);
+        return hasUnicodeWord(txt, 'bò') && !hasUnicodeWord(txt, 'bơ');
+      })
       .slice(0, 4);
 
     const codes = [...butterItems, ...beefItems].map(getItemCode);
-    const butterLines = butterItems.map((it) => `- [${getItemCode(it)}] ${it.name}`).join('\n');
-    const beefLines = beefItems.map((it) => `- [${getItemCode(it)}] ${it.name}`).join('\n');
+    const butterLines = butterItems
+      .map((it) => `- [${getItemCode(it)}] ${it.name}`)
+      .join('\n');
+    const beefLines = beefItems
+      .map((it) => `- [${getItemCode(it)}] ${it.g}: ${it.name}`)
+      .join('\n');
 
     const header =
       lang === 'EN'
@@ -614,25 +744,33 @@ function buildDisambiguationReply(
 
     const footer =
       lang === 'EN'
-        ? 'Please type "bơ" or "bò" (or item code PLx-xx) to view exact storage details.'
+        ? 'Please type "bơ" or "bò" (or item code SHE-xx) to view exact storage rules.'
         : lang === 'KO'
-          ? '정확한 보관 기준을 보려면 "bơ" 또는 "bò"(또는 코드 PLx-xx)를 입력해 주세요.'
+          ? '정확한 보관 기준을 보려면 "bơ" 또는 "bò"(또는 코드 SHE-xx)를 입력해 주세요.'
           : lang === 'HI'
-            ? 'सही भंडारण नियम देखने के लिए कृपया "bơ" या "bò" (या कोड PLx-xx) टाइप करें।'
-            : 'Vui lòng gõ rõ có dấu "bơ" hoặc "bò" (hoặc chọn mã PLx-xx) để xem chi tiết nhiệt độ bảo quản!';
+            ? 'सही भंडारण नियम देखने के लिए कृपया "bơ" या "bò" (या कोड SHE-xx) टाइप करें।'
+            : 'Vui lòng gõ rõ có dấu "bơ" hoặc "bò" (hoặc chọn mã SHE-xx) để xem chi tiết nhiệt độ bảo quản!';
 
     return {
-      reply: `${header}\n\n1. Bơ (Butter):\n${butterLines}\n\n2. Bò (Thịt bò):\n${beefLines}\n\n${footer}`,
+      reply: `${header}\n\n1. Bơ (Butter):\n${butterLines}\n\n2. Bò (Thịt bò / Thịt đỏ):\n${beefLines}\n\n${footer}`,
       matchedCodes: codes,
     };
   }
 
-  const pineappleItems = items.filter((it) => hasUnicodeWord(it.name, 'dứa')).slice(0, 4);
-  const coconutItems = items.filter((it) => hasUnicodeWord(it.name, 'dừa')).slice(0, 4);
+  const pineappleItems = items
+    .filter((it) => hasUnicodeWord(getItemSearchableText(it), 'dứa'))
+    .slice(0, 4);
+  const coconutItems = items
+    .filter((it) => hasUnicodeWord(getItemSearchableText(it), 'dừa'))
+    .slice(0, 4);
   const codes = [...pineappleItems, ...coconutItems].map(getItemCode);
 
-  const pLines = pineappleItems.map((it) => `- [${getItemCode(it)}] ${it.name}`).join('\n');
-  const cLines = coconutItems.map((it) => `- [${getItemCode(it)}] ${it.name}`).join('\n');
+  const pLines = pineappleItems
+    .map((it) => `- [${getItemCode(it)}] ${it.name} (${it.g})`)
+    .join('\n');
+  const cLines = coconutItems
+    .map((it) => `- [${getItemCode(it)}] ${it.name}`)
+    .join('\n');
 
   const header =
     lang === 'EN'
@@ -640,13 +778,130 @@ function buildDisambiguationReply(
       : 'Bạn ý là dứa hay dừa?';
   const footer =
     lang === 'EN'
-      ? 'Please type "dứa" or "dừa" (or item code PLx-xx) to view exact storage details.'
-      : 'Vui lòng gõ rõ có dấu "dứa" hoặc "dừa" (hoặc chọn mã PLx-xx) để xem chi tiết!';
+      ? 'Please type "dứa" or "dừa" (or item code SHE-xx) to view exact storage rules.'
+      : 'Vui lòng gõ rõ có dấu "dứa" hoặc "dừa" (hoặc chọn mã SHE-xx) để xem chi tiết!';
 
   return {
-    reply: `${header}\n\n1. Dứa (Pineapple):\n${pLines}\n\n2. Dừa (Coconut):\n${cLines}\n\n${footer}`,
+    reply: `${header}\n\n1. Dứa (Pineapple / Trái cây tươi):\n${pLines}\n\n2. Dừa (Coconut / Nước cốt dừa):\n${cLines}\n\n${footer}`,
     matchedCodes: codes,
   };
+}
+
+function resolveShePolicyQuery(
+  rawQuestion: string,
+  normQ: string,
+  lang: Lang
+): string | null {
+  // Check explicit Article 8 / reasons / list of non-freezable items
+  const asksAllNoFreeze =
+    /\b(dieu\s*8|article\s*8|ly\s+do\s+khong\s+(?:duoc\s+|nen\s+)?cap\s+dong|danh\s+sach.*khong\s+(?:duoc\s+|nen\s+)?cap\s+dong|nhung\s+(?:mon|thuc\s+pham).*khong\s+(?:duoc\s+|nen\s+)?cap\s+dong|thuc\s+pham\s+khong\s+cap\s+dong|khong\s+nen\s+cap\s+dong|list.*not.*freeze|cannot\s+be\s+frozen|not\s+allowed.*freez)\b/.test(
+      normQ
+    ) || /제8조|냉동\s*금지|अनुच्छेद\s*8|फ़्रीज़\s*नहीं/.test(rawQuestion);
+
+  if (asksAllNoFreeze) {
+    const header =
+      lang === 'EN'
+        ? `Article 8 — ${SHE_DOC_METADATA.docCode} (${SHE_DOC_METADATA.decisionNo}): 11 food groups NOT allowed to be frozen:`
+        : lang === 'KO'
+          ? `제8조 — SHE 규정 (${SHE_DOC_METADATA.decisionNo} · ${SHE_DOC_METADATA.docCode}): 냉동 보관 금지 식품 11개 그룹:`
+          : lang === 'HI'
+            ? `अनुच्छेद 8 — SHE नियम (${SHE_DOC_METADATA.decisionNo} · ${SHE_DOC_METADATA.docCode}): फ़्रीज़ न किए जाने वाले 11 खाद्य समूह:`
+            : `Điều 8 — Quy định Khối SHE (${SHE_DOC_METADATA.decisionNo} · ${SHE_DOC_METADATA.docCode}): 11 nhóm thực phẩm KHÔNG cấp đông:`;
+    const reasonLbl =
+      lang === 'EN'
+        ? 'Reason'
+        : lang === 'KO'
+          ? '사유'
+          : lang === 'HI'
+            ? 'कारण'
+            : 'Lý do';
+    const body = SHE_NO_FREEZE_ITEMS.map((nf, i) => {
+      const loc = translateNoFreezeItem(nf, i, lang);
+      return `${i + 1}. ${loc.group} (${loc.detail})\n   • ${reasonLbl}: ${loc.reason}`;
+    }).join('\n');
+    return `${header}\n\n${body}\n\n${LEGAL_FOOTER[lang]}`;
+  }
+
+  const isPolicyTrigger =
+    /\b(quyet\s+dinh|107|fb13|she\s+qd|dieu\s*[1-9]|article\s*[1-9]|muc\s*6|quy\s+trinh|quy\s+dinh\s+chung|quy\s+tac|khung\s+nhiet\s+do|nhiet\s+do\s+chuan|ra\s+dong|lam\s+nguoi|ham\s+nong|ghi\s+nhan|dan\s+nhan|tem\s+nhan|thu\s+tu\s+xep|sap\s+xep\s+tu|cach\s+san|15\s*cm|4\s+gio|04\s+gio|ngay\s+1|han\s+thu\s+cap|han\s+noi\s+bo|7\s+ngay|07\s+ngay|tcs|fifo|fefo|fda|3\s*501|chua\s+(?:duoc\s+)?liet\s+ke|mac\s+dinh\s+3\s+ngay|nghiem\s+cam|gia\s+han|thay\s+doi\s+nhan|cach\s+tinh|cach\s+doc\s+bang|trach\s+nhiem|phong\s+qlcl|phong\s+am\s+thuc|bep\s+truong|pham\s+vi\s+ap\s+dung|hieu\s+luc|ai\s+ky|thai\s+ngoc\s+son|2\s+lan|02\s+lan|vuot\s+nguong|57\s*do|75\s*do|82\s*do|khay\s+nong|5\s*cm|thaw(?:ing)?|defrost(?:ing)?|reheat(?:ing)?|cool(?:ing)?\s+(?:process|procedure|step)|(?:thawing|cooling)\s+(?:and|&)?\s*(?:cooling|thawing)?\s*procedure|labeling\s+rule|unlisted)\b/.test(
+      normQ
+    ) || /해동|냉각|규정|라벨|보관\s*온도|डीफ़्रॉस्ट|कूलिंग|लेबल|नियम/.test(rawQuestion);
+
+  if (!isPolicyTrigger) return null;
+
+  const { tokens } = extractCleanKeyword(rawQuestion);
+  const extraTokens = normQ.split(/\s+/).filter((t) => t.length >= 2);
+  const searchPool = Array.from(new Set([...tokens, ...extraTokens]));
+
+  const localizedClues: string[] = [];
+  if (/해동|डीफ़्रॉस्ट/.test(rawQuestion)) localizedClues.push('ra dong');
+  if (/냉각|कूलिंग/.test(rawQuestion)) localizedClues.push('lam nguoi');
+  if (/재가열|गरम/.test(rawQuestion)) localizedClues.push('ham nong');
+  if (/라벨|लेबल/.test(rawQuestion)) localizedClues.push('ghi nhan');
+
+  const scored: Array<{ sec: ShePolicySection; score: number }> = [];
+  for (const sec of SHE_POLICY_SECTIONS) {
+    let score = 0;
+    const titleNorm = normNameForCompare(`${sec.article} ${sec.title}`);
+    for (const kw of sec.keywords) {
+      const kwPattern = new RegExp(`(?:^|\\s)${kw.replace(/\s+/g, '\\s+')}(?:$|\\s)`);
+      if (kwPattern.test(normQ) || localizedClues.includes(kw)) {
+        score += kw.includes(' ') ? 45 : 22;
+      }
+    }
+    for (const tk of searchPool) {
+      if (tk.length >= 3 && titleNorm.includes(tk)) score += 12;
+    }
+    if (score > 0) scored.push({ sec, score });
+  }
+
+  const explicitMetaQuestion =
+    /\b(ai\s+ky|ngay\s+ky|hieu\s+luc|ngay\s+hieu\s+luc|pham\s+vi\s+ap\s+dung|doi\s+tuong\s+ap\s+dung|so\s+quyet\s+dinh|phien\s+ban|thai\s+ngoc\s+son|bao\s+mat\s+tai\s+lieu|don\s+vi\s+chu\s+so\s+huu|effective\s+date|decision\s+number|scope\s+of\s+application)\b/.test(
+      normQ
+    );
+
+  const nonMetaScored = scored.filter((s) => s.sec.id !== 'META');
+  const filteredScored =
+    explicitMetaQuestion || nonMetaScored.length === 0 ? scored : nonMetaScored;
+
+  filteredScored.sort((a, b) => b.score - a.score);
+  if (filteredScored.length === 0) return null;
+
+  const top = filteredScored.slice(0, 2).map((s) => s.sec);
+  const heading =
+    lang === 'EN'
+      ? `According to Decision ${SHE_DOC_METADATA.decisionNo} (${SHE_DOC_METADATA.docCode}):`
+      : lang === 'KO'
+        ? `결정 ${SHE_DOC_METADATA.decisionNo} (${SHE_DOC_METADATA.docCode}) 기준:`
+        : lang === 'HI'
+          ? `निर्णय ${SHE_DOC_METADATA.decisionNo} (${SHE_DOC_METADATA.docCode}) के अनुसार:`
+          : `Theo ${SHE_DOC_METADATA.title} (${SHE_DOC_METADATA.decisionNo} · ${SHE_DOC_METADATA.docCode}):`;
+
+  const blocks = top.map((s) => {
+    const loc = translatePolicySection(s, lang);
+    return `[${loc.article} — ${loc.title}]\n${loc.summary}`;
+  });
+  return `${heading}\n\n${blocks.join('\n\n')}\n\n${LEGAL_FOOTER[lang]}`;
+}
+
+function recoverAccentedPhrase(rawQuestion: string, cleanedFallback: string, tokens: string[]): string {
+  const rawWords = rawQuestion
+    .split(/[\s,.;:!?()[\]{}"'\/\\|]+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+  const picked: string[] = [];
+  for (const tk of tokens) {
+    const found = rawWords.find((rw) => {
+      const rwNorm = rw
+        .toLowerCase()
+        .replace(/đ/g, 'd')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      return rwNorm === tk;
+    });
+    picked.push(found ? found.toLowerCase() : tk);
+  }
+  return picked.join(' ').trim() || cleanedFallback;
 }
 
 export function resolveChatQueryLocally(
@@ -706,25 +961,36 @@ export function resolveChatQueryLocally(
     };
   }
 
-  // 2. Type D: Direct Item Code Lookup (e.g., "PL1-03", "pl1 03", "mã PL2-08 bảo quản sao")
-  const codeMatch = normQ.match(/\bpl([123])-(\d{2})\b/);
-  if (codeMatch) {
-    const targetCode = `PL${codeMatch[1]}-${codeMatch[2]}`;
+  // 2. Type D: Direct SHE Item Code Lookup ("SHE-01".."SHE-66")
+  const sheCodeMatch = normQ.match(/\bshe-(\d{2})\b/);
+  if (sheCodeMatch) {
+    const targetCode = `SHE-${sheCodeMatch[1]}`;
     const exactItem = itemsMap.get(targetCode);
-    const { asksDisplay } = extractCleanKeyword(question);
     if (exactItem) {
       const heading =
         lang === 'EN'
-          ? `Found 1 item matching '${targetCode}':`
+          ? `Found 1 SHE regulation item matching '${targetCode}' (${SHE_DOC_METADATA.docCode}):`
           : lang === 'KO'
-            ? `'${targetCode}' 항목 1건 조회:`
+            ? `SHE 규정(${SHE_DOC_METADATA.docCode}) '${targetCode}' 1건 조회:`
             : lang === 'HI'
-              ? `'${targetCode}' के लिए 1 आइटम मिला:`
-              : `Tìm thấy 1 món liên quan đến '${targetCode}':`;
+              ? `SHE नियम (${SHE_DOC_METADATA.docCode}) में '${targetCode}' के लिए 1 आइटम मिला:`
+              : `Tìm thấy 1 mục theo mã '${targetCode}' (${SHE_DOC_METADATA.docCode}):`;
+      const noFreezeHits = isNoFreezeCell(exactItem.freeze)
+        ? scoreSheNoFreezeItems(
+            normNameForCompare(exactItem.name),
+            normNameForCompare(exactItem.name).split(/\s+/).filter(Boolean),
+            exactItem.name
+          )
+        : [];
+      const noFreezeCallout = formatSheNoFreezeCallout(noFreezeHits.slice(0, 2), lang);
+      const parts = [heading, formatLocalizedItemBlock(exactItem, lang)];
+      if (noFreezeCallout) parts.push(noFreezeCallout);
+      parts.push(LEGAL_FOOTER[lang]);
+
       return {
         handled: true,
         intent: 'D',
-        reply: `${heading}\n\n${formatLocalizedItemBlock(exactItem, lang, asksDisplay || exactItem.a === 'PL3')}\n\n${LEGAL_FOOTER[lang]}`,
+        reply: parts.join('\n\n'),
         matchedCodes: [targetCode],
         nextPagination: null,
         nextDisambiguation: null,
@@ -732,6 +998,21 @@ export function resolveChatQueryLocally(
         extractedKeyword: targetCode,
       };
     }
+  }
+
+  // 2b. Policy / Operational Procedure Lookup (Điều 1–9, Điều 8)
+  const policyReply = resolveShePolicyQuery(question, normQ, lang);
+  if (policyReply) {
+    return {
+      handled: true,
+      intent: 'POLICY',
+      reply: policyReply,
+      matchedCodes: [],
+      nextPagination: null,
+      nextDisambiguation: null,
+      detectedLang: lang,
+      extractedKeyword: question,
+    };
   }
 
   // 3. Strict Ambiguity Check ("bo" / "dua" without accents)
@@ -787,11 +1068,11 @@ export function resolveChatQueryLocally(
       const heading =
         lang === 'EN'
           ? `Details for [${getItemCode(chosenItem)}] ${chosenItem.name}:`
-          : `Chi tiết món bạn đang hỏi (${targetIdx + 1}/${prevCodes.length}):`;
+          : `Chi tiết mục bạn đang hỏi (${targetIdx + 1}/${prevCodes.length}):`;
       return {
         handled: true,
         intent: 'E',
-        reply: `${heading}\n\n${formatLocalizedItemBlock(chosenItem, lang, chosenItem.a === 'PL3')}\n\n${LEGAL_FOOTER[lang]}`,
+        reply: `${heading}\n\n${formatLocalizedItemBlock(chosenItem, lang)}\n\n${LEGAL_FOOTER[lang]}`,
         matchedCodes: [getItemCode(chosenItem)],
         nextPagination: null,
         nextDisambiguation: null,
@@ -801,7 +1082,7 @@ export function resolveChatQueryLocally(
     }
   }
 
-  // 5. Type C: Comparison Query ("bánh mì với bánh ngọt cái nào để lâu hơn", "so sánh A và B")
+  // 5. Type C: Comparison Query ("so sánh A với B", "cái nào để lâu hơn")
   const isCompareIntent =
     /\b(so\s+sanh|cai\s+nao\s+de\s+lau\s+hon|nao\s+de\s+lau\s+hon|de\s+lau\s+hon|lau\s+hon|compare|longer)\b/.test(
       normQ
@@ -827,13 +1108,13 @@ export function resolveChatQueryLocally(
         const leftCode = getItemCode(leftItem);
         const rightCode = getItemCode(rightItem);
 
-        const lRoom = hasCellValue(leftItem.room) ? leftItem.room : '—';
-        const lCool = hasCellValue(leftItem.cool) ? leftItem.cool : '—';
-        const lFreeze = hasCellValue(leftItem.freeze) ? leftItem.freeze : '—';
+        const lRoom = formatCellDisplay(leftItem.room, lang);
+        const lCool = formatCellDisplay(leftItem.cool, lang);
+        const lFreeze = formatCellDisplay(leftItem.freeze, lang);
 
-        const rRoom = hasCellValue(rightItem.room) ? rightItem.room : '—';
-        const rCool = hasCellValue(rightItem.cool) ? rightItem.cool : '—';
-        const rFreeze = hasCellValue(rightItem.freeze) ? rightItem.freeze : '—';
+        const rRoom = formatCellDisplay(rightItem.room, lang);
+        const rCool = formatCellDisplay(rightItem.cool, lang);
+        const rFreeze = formatCellDisplay(rightItem.freeze, lang);
 
         const leftMax = Math.max(
           parseMaxDurationHours(leftItem.room),
@@ -846,14 +1127,14 @@ export function resolveChatQueryLocally(
           parseMaxDurationHours(rightItem.freeze)
         );
 
-        const colCompare = (label: string, v1: string, v2: string) => {
-          const h1 = parseMaxDurationHours(v1);
-          const h2 = parseMaxDurationHours(v2);
-          if (h1 === 0 && h2 === 0) return `• ${label}: — vs —`;
-          if (h1 === h2) return `• ${label}: ${v1} = ${v2}`;
+        const colCompare = (label: string, raw1: string, raw2: string, d1: string, d2: string) => {
+          const h1 = parseMaxDurationHours(raw1);
+          const h2 = parseMaxDurationHours(raw2);
+          if (h1 === 0 && h2 === 0) return `• ${label}: ${d1} / ${d2}`;
+          if (h1 === h2) return `• ${label}: ${d1} = ${d2}`;
           return h1 > h2
-            ? `• ${label}: [${leftCode}] (${v1}) > [${rightCode}] (${v2})`
-            : `• ${label}: [${rightCode}] (${v2}) > [${leftCode}] (${v1})`;
+            ? `• ${label}: [${leftCode}] (${d1}) > [${rightCode}] (${d2})`
+            : `• ${label}: [${rightCode}] (${d2}) > [${leftCode}] (${d1})`;
         };
 
         const conclusion =
@@ -871,37 +1152,29 @@ export function resolveChatQueryLocally(
 
         const compareHeading =
           lang === 'EN'
-            ? `Comparison across 3 temperature columns:`
+            ? `Comparison across 3 SHE temperature columns:`
             : lang === 'KO'
-              ? `3가지 온도 기준 비교표:`
+              ? `SHE 3가지 온도 기준 비교표:`
               : lang === 'HI'
-                ? `3 तापमान कॉलम तुलना तालिका:`
-                : `Bảng so sánh 3 cột nhiệt độ:`;
+                ? `SHE 3 तापमान कॉलम तुलना तालिका:`
+                : `Bảng so sánh 3 cột nhiệt độ (SHE-QĐ-FB13):`;
 
         const tableText = [
-          `| Sản phẩm | Phòng | 1-4°C | ≤ -18°C |`,
+          `| Thực phẩm | Phòng (15–25°C) | Lạnh (0–5°C) | Đông (≤ −18°C) |`,
           `| [${leftCode}] ${leftItem.name} | ${lRoom} | ${lCool} | ${lFreeze} |`,
           `| [${rightCode}] ${rightItem.name} | ${rRoom} | ${rCool} | ${rFreeze} |`,
         ].join('\n');
 
         const summaryCols = [
-          colCompare(lang === 'EN' ? 'Room temp' : 'Nhiệt độ phòng', lRoom, rRoom),
-          colCompare('1-4°C', lCool, rCool),
-          colCompare('≤ -18°C', lFreeze, rFreeze),
+          colCompare(lang === 'EN' ? 'Room (15–25°C)' : 'Phòng (15–25°C)', leftItem.room, rightItem.room, lRoom, rRoom),
+          colCompare(lang === 'EN' ? 'Chilled (0–5°C)' : 'Lạnh (0–5°C)', leftItem.cool, rightItem.cool, lCool, rCool),
+          colCompare(lang === 'EN' ? 'Frozen (≤ −18°C)' : 'Đông (≤ −18°C)', leftItem.freeze, rightItem.freeze, lFreeze, rFreeze),
         ].join('\n');
-
-        const reply = [
-          compareHeading,
-          tableText,
-          summaryCols,
-          conclusion,
-          LEGAL_FOOTER[lang],
-        ].join('\n\n');
 
         return {
           handled: true,
           intent: 'C',
-          reply,
+          reply: [compareHeading, tableText, summaryCols, conclusion, LEGAL_FOOTER[lang]].join('\n\n'),
           matchedCodes: [leftCode, rightCode],
           nextPagination: null,
           nextDisambiguation: null,
@@ -913,16 +1186,16 @@ export function resolveChatQueryLocally(
   }
 
   // Extract normalized keyword & column filter
-  const { cleaned, tokens, colFilter, asksDisplay } = extractCleanKeyword(question);
+  const { cleaned, tokens, colFilter } = extractCleanKeyword(question);
 
-  // Follow-up storage-only question with previous item context (e.g., "còn tủ đông thì sao?" without repeating food name)
+  // Follow-up storage-only question with previous item context
   if (!cleaned && colFilter && recentAssistantWithCodes && !/\b(bao\s+nhieu|nhung\s+mon|mon\s+nao|cac\s+mon|liet\s+ke|how\s+many|which)\b/.test(normQ)) {
     const prevItems = (recentAssistantWithCodes.matchedCodes || [])
       .map((c) => itemsMap.get(c.toUpperCase()))
       .filter((it): it is FoodItem => Boolean(it))
       .slice(0, 5);
     if (prevItems.length > 0) {
-      const blocks = prevItems.map((it) => formatLocalizedItemBlock(it, lang, asksDisplay || it.a === 'PL3'));
+      const blocks = prevItems.map((it) => formatLocalizedItemBlock(it, lang));
       return {
         handled: true,
         intent: 'E',
@@ -936,8 +1209,8 @@ export function resolveChatQueryLocally(
     }
   }
 
-  // 6. Type B: Count / Column Filter (NO leftover food name OR explicit counting phrase)
-  const isCountingPhrase = /\b(co\s+bao\s+nhieu|bao\s+nhieu\s+(?:mon|san\s+pham)|co\s+may\s+(?:mon|san\s+pham)|nhung\s+mon\s+nao|mon\s+nao|cac\s+mon|liet\s+ke|danh\s+sach|how\s+many|which\s+items|list\s+all)\b/.test(
+  // 6. Type B: Count / Column Filter
+  const isCountingPhrase = /\b(co\s+bao\s+nhieu|bao\s+nhieu\s+(?:mon|san\s+pham|muc)|co\s+may\s+(?:mon|san\s+pham|muc)|nhung\s+mon\s+nao|mon\s+nao|cac\s+mon|liet\s+ke|danh\s+sach|how\s+many|which\s+items|list\s+all)\b/.test(
     normQ
   );
   if (colFilter && (tokens.length === 0 || isCountingPhrase)) {
@@ -947,45 +1220,52 @@ export function resolveChatQueryLocally(
       matched = items.filter((it) => hasCellValue(it.room));
       condLabel =
         lang === 'EN'
-          ? 'can be stored at room temperature'
+          ? 'can be stored at room temperature (15–25°C)'
           : lang === 'KO'
-            ? '상온 보관이 가능한 항목'
+            ? '상온(15–25°C) 보관 가능 항목'
             : lang === 'HI'
-              ? 'कमरे के तापमान पर रखे जा सकते हैं'
-              : 'để được ở nhiệt độ phòng';
+              ? 'कमरे के तापमान (15–25°C) पर रखे जा सकते हैं'
+              : 'để được ở nhiệt độ phòng (15–25°C)';
     } else if (colFilter === 'cool') {
       matched = items.filter((it) => hasCellValue(it.cool));
       condLabel =
         lang === 'EN'
-          ? 'can be stored chilled (1-4°C)'
+          ? 'can be stored chilled (0–5°C)'
           : lang === 'KO'
-            ? '냉장(1-4°C) 보관이 가능한 항목'
+            ? '냉장(0–5°C) 보관 가능 항목'
             : lang === 'HI'
-              ? 'फ्रिज (1-4°C) में रखे जा सकते हैं'
-              : 'để được ở tủ lạnh / kho mát (1-4°C)';
+              ? 'ठंडे तापमान (0–5°C) में रखे जा सकते हैं'
+              : 'để được ở nhiệt độ lạnh (0–5°C)';
     } else if (colFilter === 'freeze') {
       matched = items.filter((it) => hasCellValue(it.freeze));
       condLabel =
         lang === 'EN'
-          ? 'can be stored frozen (≤ -18°C)'
+          ? 'can be stored frozen (≤ −18°C)'
           : lang === 'KO'
-            ? '냉동(≤ -18°C) 보관이 가능한 항목'
+            ? '냉동(≤ −18°C) 보관 가능 항목'
             : lang === 'HI'
-              ? 'फ़्रीज़र (≤ -18°C) में रखे जा सकते हैं'
-              : 'để được ở tủ đông / kho đông (≤ -18°C)';
-    } else if (colFilter === 'displayHot') {
-      matched = items.filter(
-        (it) => Boolean(it.displayHot) && it.displayHot !== '—' && it.displayHot !== '-'
-      );
-      condLabel = lang === 'EN' ? 'for hot display (30-40°C)' : 'trưng bày nóng (30-40°C)';
-    } else if (colFilter === 'displayCool') {
-      matched = items.filter(
-        (it) => typeof it.displayCool === 'string' && !isEmptyCell(it.displayCool)
-      );
-      condLabel = lang === 'EN' ? 'for cold display (1-4°C)' : 'trưng bày lạnh (1-4°C)';
+              ? 'फ़्रीज़र (≤ −18°C) में रखे जा सकते हैं'
+              : 'để được ở nhiệt độ đông (≤ −18°C)';
+    } else if (colFilter === 'noFreeze') {
+      matched = items.filter((it) => isNoFreezeCell(it.freeze));
+      condLabel =
+        lang === 'EN'
+          ? 'marked "Do not freeze" (Art. 7 & Art. 8)'
+          : lang === 'KO'
+            ? '냉동 금지로 지정된 항목 (제7조·제8조)'
+            : lang === 'HI'
+              ? 'जिन्हें फ़्रीज़ नहीं किया जाता (अनुच्छेद 7 व 8)'
+              : 'thuộc diện Không cấp đông (Điều 7 & Điều 8)';
     } else if (colFilter === 'today') {
       matched = items.filter((it) => hasUseToday(it));
-      condLabel = lang === 'EN' ? 'use within the day' : 'sử dụng trong ngày';
+      condLabel =
+        lang === 'EN'
+          ? 'use within the day / by hours (4–8h)'
+          : lang === 'KO'
+            ? '당일/시간 단위 사용 항목 (4–8시간)'
+            : lang === 'HI'
+              ? 'उसी दिन / घंटों में उपयोग होने वाले आइटम (4–8 घंटे)'
+              : 'sử dụng theo giờ / trong ngày (4–8 giờ)';
     }
 
     const codes = matched.map(getItemCode);
@@ -993,18 +1273,16 @@ export function resolveChatQueryLocally(
       lang === 'EN'
         ? `There are ${matched.length} items that ${condLabel}:`
         : lang === 'KO'
-          ? `${condLabel}: 총 ${matched.length}개`
+          ? `${condLabel}: 총 ${matched.length}건`
           : lang === 'HI'
             ? `${condLabel} वाले कुल ${matched.length} आइटम हैं:`
-            : `Có ${matched.length} món ${condLabel}:`;
+            : `Có ${matched.length} mục ${condLabel}:`;
 
     const pagState: ChatPaginationState = {
       codes,
       offset: 0,
       headingPrefix: heading,
       includeDisclaimer: true,
-      includeDisplayLine: colFilter === 'displayHot' || colFilter === 'displayCool',
-      emptyNoteText: '—',
     };
     const page = formatPaginatedReply(itemsMap, pagState, lang);
 
@@ -1020,13 +1298,17 @@ export function resolveChatQueryLocally(
     };
   }
 
-  // 7. Type A: Item / Group Search Lookup
+  // 7. Type A: Direct Search against SHE-QĐ-FB13 Table (Điều 7) + Điều 8 Warnings
   if (cleaned && tokens.length > 0) {
     const scored = scoreItemsForKeyword(items, cleaned, tokens, question);
+    const noFreezeHits = scoreSheNoFreezeItems(cleaned, tokens, question);
+
     if (scored.length > 0) {
       const codes = scored.map((s) => getItemCode(s.item));
       const prettyMap: Record<string, string> = {
         'banh mi': 'bánh mì',
+        'banh bao': 'bánh bao',
+        'banh kem': 'bánh kem',
         'banh ngot': 'bánh ngọt',
         'sua dac': 'sữa đặc',
         'sua tuoi': 'sữa tươi',
@@ -1034,36 +1316,36 @@ export function resolveChatQueryLocally(
         'socola': 'sô cô la',
         'ca hoi': 'cá hồi',
         'thit bo': 'thịt bò',
-        'sung bo': 'bánh sừng bò',
         'nuoc mam': 'nước mắm',
-        'hat rang': 'hạt rang',
         'dau hu': 'đậu hũ',
         'trai cay': 'trái cây',
       };
       const displayKw = prettyMap[cleaned] || recoverAccentedPhrase(question, cleaned, tokens);
       const heading =
         lang === 'EN'
-          ? `Found ${codes.length} items related to '${displayKw}':`
+          ? `Found ${codes.length} SHE regulation items related to '${displayKw}':`
           : lang === 'KO'
-            ? `'${displayKw}' 관련 ${codes.length}개 항목을 찾았습니다:`
+            ? `'${displayKw}' 관련 SHE 기준 ${codes.length}건 조회:`
             : lang === 'HI'
-              ? `'${displayKw}' से संबंधित ${codes.length} आइटम मिले:`
-              : `Tìm thấy ${codes.length} món liên quan đến '${displayKw}':`;
+              ? `'${displayKw}' से संबंधित ${codes.length} SHE नियम आइटम मिले:`
+              : `Tìm thấy ${codes.length} mục liên quan đến '${displayKw}':`;
 
       const pagState: ChatPaginationState = {
         codes,
         offset: 0,
         headingPrefix: heading,
-        includeDisclaimer: true,
-        includeDisplayLine: asksDisplay,
-        emptyNoteText: '—',
+        includeDisclaimer: noFreezeHits.length === 0,
       };
       const page = formatPaginatedReply(itemsMap, pagState, lang);
+      let finalReply = page.reply;
+      if (noFreezeHits.length > 0) {
+        finalReply = `${finalReply}\n\n${formatSheNoFreezeCallout(noFreezeHits.slice(0, 2), lang)}\n\n${LEGAL_FOOTER[lang]}`;
+      }
 
       return {
         handled: true,
         intent: 'A',
-        reply: page.reply,
+        reply: finalReply,
         matchedCodes: page.pageCodes,
         nextPagination: page.nextPagination,
         nextDisambiguation: null,
@@ -1071,9 +1353,22 @@ export function resolveChatQueryLocally(
         extractedKeyword: displayKw,
       };
     }
+
+    if (noFreezeHits.length > 0) {
+      const displayKw = recoverAccentedPhrase(question, cleaned, tokens);
+      return {
+        handled: true,
+        intent: 'A',
+        reply: `${formatSheNoFreezeCallout(noFreezeHits.slice(0, 4), lang)}\n\n${LEGAL_FOOTER[lang]}`,
+        matchedCodes: [],
+        nextPagination: null,
+        nextDisambiguation: null,
+        detectedLang: lang,
+        extractedKeyword: displayKw,
+      };
+    }
   }
 
-  // Not handled deterministically yet -> let online Gemini AI attempt semantic matching OR fallback to Rule 6 / Type F
   return {
     handled: false,
     intent: 'F',
@@ -1084,26 +1379,6 @@ export function resolveChatQueryLocally(
     detectedLang: lang,
     extractedKeyword: cleaned ? recoverAccentedPhrase(question, cleaned, tokens) : question,
   };
-}
-
-function recoverAccentedPhrase(rawQuestion: string, cleanedFallback: string, tokens: string[]): string {
-  const rawWords = rawQuestion
-    .split(/[\s,.;:!?()[\]{}"'\/\\|]+/)
-    .map((w) => w.trim())
-    .filter(Boolean);
-  const picked: string[] = [];
-  for (const tk of tokens) {
-    const found = rawWords.find((rw) => {
-      const rwNorm = rw
-        .toLowerCase()
-        .replace(/đ/g, 'd')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-      return rwNorm === tk;
-    });
-    picked.push(found ? found.toLowerCase() : tk);
-  }
-  return picked.join(' ').trim() || cleanedFallback;
 }
 
 export function buildNotFoundFallbackReply(
@@ -1120,25 +1395,25 @@ export function buildNotFoundFallbackReply(
     const kwLabel = extractedKeyword.slice(0, 40);
     const intro =
       lang === 'EN'
-        ? `Could not find exact name '${kwLabel}' in the system. Did you mean one of these 3 closest items?`
+        ? `Could not find exact name '${kwLabel}' in SHE-QĐ-FB13. Did you mean one of these 3 closest items?`
         : lang === 'KO'
-          ? `시스템에서 '${kwLabel}' 정확한 이름을 찾지 못했습니다. 가장 유사한 3가지 품목 중 하나를 찾으셨나요?`
+          ? `SHE-QĐ-FB13에서 '${kwLabel}' 정확한 항목을 찾지 못했습니다. 가장 유사한 3가지 품목 중 하나를 찾으셨나요?`
           : lang === 'HI'
-            ? `सिस्टम में सटीक नाम '${kwLabel}' नहीं मिला। क्या आपका आशय इन 3 सबसे करीबी आइटमों में से किसी एक से है?`
-            : `Không thấy đúng tên '${kwLabel}' trong hệ thống, bạn có ý là 1 trong 3 món gần nhất này không?`;
+            ? `SHE-QĐ-FB13 में सटीक नाम '${kwLabel}' नहीं मिला। क्या आपका आशय इन 3 सबसे करीबी आइटमों में से किसी एक से है?`
+            : `Không thấy đúng tên '${kwLabel}' trong bảng Điều 7 (SHE-QĐ-FB13), bạn có ý là 1 trong 3 mục gần nhất này không?`;
 
     const listText = nearestItems
-      .map((it) => formatLocalizedItemBlock(it, lang, false))
+      .map((it) => formatLocalizedItemBlock(it, lang))
       .join('\n\n');
 
     const ask =
       lang === 'EN'
-        ? 'Which item would you like to view? Or type another name / code (PLx-xx).'
+        ? 'Which item would you like to view? Or type another name / code (SHE-xx).'
         : lang === 'KO'
-          ? '어떤 항목을 보시겠습니까? 또는 다른 이름이나 코드(PLx-xx)를 입력해 주세요.'
+          ? '어떤 항목을 보시겠습니까? 또는 다른 이름이나 코드(SHE-xx)를 입력해 주세요.'
           : lang === 'HI'
-            ? 'आप कौन सा आइटम देखना चाहते हैं? या दूसरा नाम / कोड (PLx-xx) टाइप करें।'
-            : 'Bạn muốn xem món nào? Hoặc gõ lại tên khác / mã PLx-xx.';
+            ? 'आप कौन सा आइटम देखना चाहते हैं? या दूसरा नाम / कोड (SHE-xx) टाइप करें।'
+            : 'Bạn muốn xem mục nào? Hoặc gõ lại tên khác / mã SHE-xx.';
 
     return {
       reply: `${intro}\n\n${listText}\n\n${ask}`,
@@ -1150,7 +1425,7 @@ export function buildNotFoundFallbackReply(
     nearestGroups.length > 0
       ? nearestGroups
       : items
-          .map((i) => i.g)
+          .map((i) => translateGroup(i.g, lang))
           .filter((g, idx, arr) => Boolean(g) && arr.indexOf(g) === idx)
           .slice(0, 2);
 

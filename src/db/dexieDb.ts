@@ -22,19 +22,23 @@ export interface DbMetaEntry {
 // Precomputed SHA-256 hex digest of default Super Admin passcode (no plaintext stored)
 const DEFAULT_SUPER_ADMIN_HASH =
   '137051d2738559de3325416cbb65a14c74775923e4c42e43c933d55f384e9037';
-const BASELINE_VERSION = 'v14.11-baseline-145';
+const BASELINE_VERSION = 'she-qd-fb13-v00-20261112';
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   id: 'system',
-  appTitle:
-    'HỆ THỐNG TRA CỨU NHIỆT ĐỘ BẢO QUẢN & THỜI HẠN SỬ DỤNG THỰC PHẨM',
-  appSubtitle: 'BAN ẨM THỰC - SUN WORLD BA NA HILLS',
-  mobileTitleLine1: 'HỆ THỐNG TRA CỨU',
-  mobileTitleLine2: 'NHIỆT ĐỘ BẢO QUẢN & THỜI HẠN SỬ DỤNG THỰC PHẨM',
-  logoUrl: '/bnc-logo.jpg',
+  appTitle: 'QUY ĐỊNH BẢO QUẢN VÀ HẠN SỬ DỤNG THỰC PHẨM TẠI KHỐI SHE',
+  appSubtitle: 'QUYẾT ĐỊNH 107/2026/QĐ-SHE/SG · MÃ HIỆU SHE-QĐ-FB13 (PB 00)',
+  mobileTitleLine1: 'TRA CỨU BẢO QUẢN & HSD THỰC PHẨM',
+  mobileTitleLine2: 'KHỐI SHE · QĐ 107/2026 (SHE-QĐ-FB13)',
+  logoUrl: '',
   bannerImageUrl: '',
   alertBannerText: '',
   alertBannerEnabled: false,
+  appLocked: false,
+  appLockMessage: '',
+  appLockPin: '',
+  customColumns: [],
+  autoSyncCloud: true,
   updatedAt: 0,
 };
 
@@ -123,7 +127,7 @@ function sha256Fallback(ascii: string): string {
   return result;
 }
 
-class BncFoodDatabase extends Dexie {
+class SheFoodDatabase extends Dexie {
   items!: Table<StoredFoodRecord, string>;
   config!: Table<SystemConfig, string>;
   users!: Table<AdminUser, string>;
@@ -146,7 +150,7 @@ class BncFoodDatabase extends Dexie {
   }
 }
 
-export const db = new BncFoodDatabase();
+export const db = new SheFoodDatabase();
 
 export function toStoredRecord(item: FoodItem): StoredFoodRecord {
   return {
@@ -169,29 +173,52 @@ export function initializeLocalDatabase(): Promise<void> {
         await db.items.bulkPut(FOOD_ITEMS.map(toStoredRecord));
         await db.meta.put({ key: 'baselineVersion', value: BASELINE_VERSION });
       } else if (!baselineMeta || baselineMeta.value !== BASELINE_VERSION) {
-        // Sync official baseline items that haven't been customized while preserving admin edits/custom items
-        const existingMap = new Map<string, StoredFoodRecord>();
         const allExisting = await db.items.toArray();
-        for (const rec of allExisting) {
-          existingMap.set(rec.code, rec);
-        }
-
-        const updates: StoredFoodRecord[] = [];
-        for (const baseItem of FOOD_ITEMS) {
-          const code = getItemCode(baseItem);
-          const current = existingMap.get(code);
-          if (!current || (!current.isCustom && !current.updatedAt)) {
-            updates.push(toStoredRecord(baseItem));
+        const hasLegacyVer1 = allExisting.some((r) => (r.a as string) !== 'SHE');
+        if (hasLegacyVer1) {
+          // Purge all legacy Ver 1 PL1/PL2/PL3 rows and install clean SHE baseline
+          const customSheItems = allExisting.filter(
+            (r) => r.a === 'SHE' && r.isCustom
+          );
+          await db.items.clear();
+          await db.items.bulkPut(FOOD_ITEMS.map(toStoredRecord));
+          if (customSheItems.length > 0) {
+            await db.items.bulkPut(customSheItems);
           }
-        }
-        if (updates.length > 0) {
-          await db.items.bulkPut(updates);
+          // Clean up legacy viewStats & searchLogs pointing to deleted PLx codes if desired, keeping custom SHE stats
+          const legacyStatKeys = (await db.viewStats.toArray())
+            .filter((vs) => (vs.appendix as string) !== 'SHE')
+            .map((vs) => vs.itemCode);
+          if (legacyStatKeys.length > 0) {
+            await db.viewStats.bulkDelete(legacyStatKeys);
+          }
+        } else {
+          const existingMap = new Map<string, StoredFoodRecord>();
+          for (const rec of allExisting) {
+            existingMap.set(rec.code, rec);
+          }
+          const updates: StoredFoodRecord[] = [];
+          for (const baseItem of FOOD_ITEMS) {
+            const code = getItemCode(baseItem);
+            const current = existingMap.get(code);
+            if (!current || (!current.isCustom && !current.updatedAt)) {
+              updates.push(toStoredRecord(baseItem));
+            }
+          }
+          if (updates.length > 0) {
+            await db.items.bulkPut(updates);
+          }
         }
         await db.meta.put({ key: 'baselineVersion', value: BASELINE_VERSION });
       }
 
       const configRow = await db.config.get('system');
-      if (!configRow) {
+      const isLegacyConfig =
+        !configRow ||
+        configRow.appSubtitle?.includes('BA NA HILLS') ||
+        configRow.appSubtitle?.includes('BAN ẨM THỰC') ||
+        configRow.logoUrl === '/bnc-logo.jpg';
+      if (isLegacyConfig) {
         await db.config.put({ ...DEFAULT_SYSTEM_CONFIG, updatedAt: Date.now() });
       }
 
@@ -208,6 +235,8 @@ export function initializeLocalDatabase(): Promise<void> {
             'delete_items',
             'view_export_reports',
             'import_data',
+            'lock_app',
+            'manage_cloud',
           ],
           allowedGroups: ['ALL'],
           createdAt: Date.now(),
@@ -221,13 +250,21 @@ export function initializeLocalDatabase(): Promise<void> {
   return initPromise;
 }
 
+export function sortCatalogItems(items: FoodItem[]): FoodItem[] {
+  return [...items].sort((a, b) => {
+    const ao = a.order ?? a.n;
+    const bo = b.order ?? b.n;
+    if (ao !== bo) return ao - bo;
+    return a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1;
+  });
+}
+
 export async function loadAllItemsFromDb(): Promise<FoodItem[]> {
   try {
     await initializeLocalDatabase();
     const rows = await db.items.toArray();
     if (rows.length === 0) return [...FOOD_ITEMS];
-    rows.sort((a, b) => (a.a === b.a ? a.n - b.n : a.a < b.a ? -1 : 1));
-    return rows;
+    return sortCatalogItems(rows);
   } catch {
     return [...FOOD_ITEMS];
   }
@@ -341,7 +378,7 @@ export async function authenticateAdminUser(
   const normalizedUser = usernameInput.trim().toLowerCase() || 'admin';
   const users = await db.users.toArray();
   const target = users.find((u) => u.username.toLowerCase() === normalizedUser);
-  if (!target) return null;
+  if (!target || target.disabled) return null;
 
   const candidateHash = await hashPasswordSha256(passwordInput);
   if (candidateHash !== target.passwordHash) return null;

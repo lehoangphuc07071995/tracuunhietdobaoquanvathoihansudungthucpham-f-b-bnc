@@ -12,21 +12,15 @@ const COMPACT_CATALOG = FOOD_ITEMS.map((item) => {
     item.g,
     item.name,
     item.enName || '',
-    `R:${item.room}`,
-    `C:${item.cool}`,
-    `F:${item.freeze}`,
+    `Room(15-25C):${item.room}`,
+    `Cool(0-5C):${item.cool}`,
+    `Freeze(<=-18C):${item.freeze}`,
   ];
-  if (item.displayCool && item.displayCool !== '—') {
-    parts.push(`DC:${item.displayCool}`);
-  }
-  if (item.displayHot && item.displayHot !== '—' && item.displayHot !== '-') {
-    parts.push(`DH:${item.displayHot}`);
-  }
-  if (item.weight) {
-    parts.push(`W:${item.weight}`);
+  if (item.keywords && item.keywords.length > 0) {
+    parts.push(`KW:${item.keywords.join(',')}`);
   }
   if (item.note && item.note !== '—') {
-    parts.push(`N:${item.note}`);
+    parts.push(`Note:${item.note}`);
   }
   if (item.flag) {
     parts.push(`QA:${item.flag}`);
@@ -109,16 +103,17 @@ export default async function handler(req: VercelReq, res: ServerResponse) {
       },
     });
 
-    const systemInstruction = `You are a food hygiene and F&B storage compliance search assistant for Sun World Ba Na Hills (BNC).
-Your ONLY job is to map the user's search query (which may be natural language, ingredients, recipes, kitchen slang, typos, storage temperature conditions, shelf-life rules, Vietnamese without accents, English, Korean, or Hindi) to the exact matching item codes in the official 145-item BNC Food Storage & Shelf Life Catalog below.
+    const systemInstruction = `You are a food hygiene and F&B storage compliance search assistant for Sun Group SHE Division (Quyết định 107/2026/QĐ-SHE/SG, Code SHE-QĐ-FB13).
+Your ONLY job is to map the user's search query (natural language, ingredients, recipes, kitchen terms, typos, storage temperature conditions, shelf-life rules, Vietnamese without accents, English, Korean, or Hindi) to the exact matching item codes in the official 66-item SHE-QĐ-FB13 Food Storage & Shelf Life Catalog below.
 
 CRITICAL LEGAL & DATA INTEGRITY RULES:
-1. NEVER invent, guess, alter, or recalculate any shelf life, temperature, weight, or note.
-2. ONLY return item codes that explicitly exist in the catalog (format PL1-01 to PL3-57).
-3. Rank codes strictly from MOST relevant to least relevant (maximum 24 codes). If no item matches, return an empty array.
-4. Explain briefly in 1 concise sentence in ${LANG_LABEL[lang]} why those items matched (e.g., matching ingredient, storage condition, same-day rule, or QA conflict), without quoting fabricated durations.
+1. NEVER invent, guess, alter, or recalculate any shelf life, temperature, or note.
+2. ONLY return item codes that explicitly exist in the catalog (format SHE-01 to SHE-66).
+3. Respect Vietnamese diacritics strictly: "bơ" (butter) vs "bò" (beef); "dứa" (pineapple) vs "dừa" (coconut).
+4. Rank codes strictly from MOST relevant to least relevant (maximum 24 codes). If no item matches, return an empty array.
+5. Explain briefly in 1 concise sentence in ${LANG_LABEL[lang]} why those items matched (e.g., matching food group, temperature band, no-freeze rule, or shelf-life note), without quoting fabricated durations.
 
-OFFICIAL CATALOG (Code | Group | Name | EnName | Room(R) | Cool 1-4C(C) | Freeze <=-18C(F) | DisplayCool(DC) | DisplayHot(DH) | Weight(W) | Note(N) | QA Flag):
+OFFICIAL SHE-QĐ-FB13 CATALOG (Code | Group | Name | EnName | Room 15-25C | Cool 0-5C | Freeze <=-18C | Keywords | Note | QA):
 ${COMPACT_CATALOG}`;
 
     const response = await ai.models.generateContent({
@@ -135,7 +130,7 @@ ${COMPACT_CATALOG}`;
               type: Type.ARRAY,
               items: { type: Type.STRING },
               description:
-                'Exact official item codes from the catalog ordered by relevance (max 24).',
+                'Exact official SHE item codes from the catalog ordered by relevance (max 24).',
             },
             reason: {
               type: Type.STRING,
