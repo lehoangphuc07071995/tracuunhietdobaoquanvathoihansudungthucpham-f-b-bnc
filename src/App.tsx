@@ -158,7 +158,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'KHỐI SHE · QĐ 107/2026 (SHE-QĐ-FB13)',
     mobileSearchPlaceholder: 'Tìm món, mã SHE-01, nhóm, không cấp đông...',
     desktopSearchPlaceholder: 'Tìm tên loại thực phẩm, mã SHE-01, nhóm hàng, hoặc quy trình bảo quản...',
-    footerInternal: 'QUY ĐỊNH LƯU HÀNH NỘI BỘ KHỐI SHE · SHE-QĐ-FB13 (PB 00)',
+    footerInternal: 'HỆ THỐNG TRA CỨU NỘI BỘ - BAN ẨM THỰC - SUN WORLD BA NA HILLS',
     historyBtn: 'Lịch sử',
     historyTitle: 'Lịch sử tra cứu của tôi',
     adminBtn: 'Admin',
@@ -236,7 +236,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'SHE DIVISION · DEC 107/2026 (SHE-QĐ-FB13)',
     mobileSearchPlaceholder: 'Search food, SHE-01, group, no freeze...',
     desktopSearchPlaceholder: 'Search food type, SHE-01 code, group, or storage procedure...',
-    footerInternal: 'INTERNAL CIRCULATION · SHE DIVISION · SHE-QĐ-FB13 (VER 00)',
+    footerInternal: 'INTERNAL LOOKUP SYSTEM - CULINARY DIVISION - SUN WORLD BA NA HILLS',
     historyBtn: 'History',
     historyTitle: 'My Lookup History',
     adminBtn: 'Admin',
@@ -314,7 +314,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: '결정 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13)',
     mobileSearchPlaceholder: '식품, SHE-01, 그룹, 냉동 금지 검색...',
     desktopSearchPlaceholder: '식품 유형, SHE-01 코드, 그룹 또는 보관 규정 검색...',
-    footerInternal: 'SHE 부문 사내 전용 규정 · SHE-QĐ-FB13 (VER 00)',
+    footerInternal: '내부 조회 시스템 - 식음료부 - SUN WORLD BA NA HILLS',
     historyBtn: '기록',
     historyTitle: '내 조회 기록',
     adminBtn: '관리자',
@@ -392,7 +392,7 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     mobileTitleLine2: 'निर्णय 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13)',
     mobileSearchPlaceholder: 'खाद्य, SHE-01, समूह, फ़्रीज़ नहीं खोजें...',
     desktopSearchPlaceholder: 'खाद्य प्रकार, SHE-01 कोड, समूह या भंडारण नियम खोजें...',
-    footerInternal: 'SHE डिवीजन आंतरिक नियम · SHE-QĐ-FB13 (VER 00)',
+    footerInternal: 'आंतरिक खोज प्रणाली - खाद्य एवं पेय प्रभाग - SUN WORLD BA NA HILLS',
     historyBtn: 'इतिहास',
     historyTitle: 'मेरा खोज इतिहास',
     adminBtn: 'एडमिन',
@@ -2348,7 +2348,7 @@ ${t.sourceDoc}`;
       <footer className="border-t border-[#C9A227]/70 bg-[#122A47]">
         <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 pb-16 sm:pb-4 sm:pr-44 text-[12.5px] font-semibold text-[#E2C665]">
           <span>{ex.footerInternal}</span>
-          <span className="font-normal">by Le Hoang Phuc</span>
+          <span className="font-normal">Developed by Le Hoang Phuc</span>
         </div>
       </footer>
 

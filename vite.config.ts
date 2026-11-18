@@ -94,10 +94,23 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
         },
       }),
+      {
+        name: 'dev-manifest-link',
+        apply: 'serve',
+        transformIndexHtml() {
+          return [
+            {
+              tag: 'link',
+              attrs: { rel: 'manifest', href: '/manifest.webmanifest' },
+              injectTo: 'head',
+            },
+          ];
+        },
+      },
     ],
     resolve: {
       alias: {
