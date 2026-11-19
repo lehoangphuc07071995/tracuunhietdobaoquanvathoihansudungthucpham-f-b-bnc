@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Type } from '@google/genai';
-import { FOOD_ITEMS, getItemCode } from '../src/data/foodData';
 import {
+  FOOD_ITEMS,
   createServerGeminiClient,
   generateContentWithFlashFallback,
-} from '../src/server/geminiClient';
-import type { Lang } from '../src/types';
+  getItemCode,
+  type Lang,
+} from './_sheCore.mjs';
 
 const VALID_ITEM_CODES = new Set(FOOD_ITEMS.map((item) => getItemCode(item)));
 

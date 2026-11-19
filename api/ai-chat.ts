@@ -2,13 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Type, type Content } from '@google/genai';
 import {
   buildSheGeminiSystemInstruction,
-  extractMatchedCodesFromText,
-} from '../src/utils/aiPromptBuilder';
-import {
   createServerGeminiClient,
+  extractMatchedCodesFromText,
   generateContentWithFlashFallback,
-} from '../src/server/geminiClient';
-import type { Lang } from '../src/types';
+  type Lang,
+} from './_sheCore.mjs';
 
 interface HistoryTurn {
   role: 'user' | 'assistant';
