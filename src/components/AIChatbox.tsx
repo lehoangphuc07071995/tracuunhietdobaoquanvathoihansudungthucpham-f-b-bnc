@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bot,
   Loader2,
   MessageSquare,
@@ -8,26 +9,40 @@ import {
   Trash2,
   WifiOff,
   X,
+  Zap,
 } from 'lucide-react';
-import { getItemCode } from '../data/foodData';
-import { translateItemName } from '../data/translations';
+import { getItemCode, isEmptyCell } from '../data/foodData';
+import {
+  translateDuration,
+  translateGroup,
+  translateItemName,
+  translateItemNote,
+} from '../data/translations';
 import { recordAiHistory } from '../db/dexieDb';
+import {
+  AiStreamHttpError,
+  buildHistoryPayload,
+  streamAskGemini,
+} from '../utils/aiStreamClient';
+import {
+  runSmartSearch,
+  shouldRouteToGeminiTier2,
+} from '../utils/smartSearch';
 import {
   buildNotFoundFallbackReply,
   resolveChatQueryLocally,
   type ChatPaginationState,
   type PendingDisambiguation,
 } from '../utils/chatEngine';
+import { FormattedAiText } from './FormattedAiText';
 import type { AiChatTurn, FoodItem, Lang } from '../types';
-
-const NOT_FOUND_MESSAGE =
-  'Không tìm thấy kết quả trong dữ liệu hệ thống, vui lòng liên hệ Quản lý trực tiếp để được hướng dẫn.';
 
 interface AIChatboxProps {
   items: FoodItem[];
   lang: Lang;
   isOnline: boolean;
   onSelectItem: (item: FoodItem) => void;
+  externalPrompt?: { id: number; text: string } | null;
 }
 
 const CHAT_TEXT: Record<
@@ -42,133 +57,222 @@ const CHAT_TEXT: Record<
     welcome: string;
     resetMsg: string;
     offlineBadge: string;
+    tier1Badge: string;
+    askDeeperBtn: string;
     loadingMsg: string;
     sampleTitle: string;
     samples: string[];
     placeholder: string;
+    followupPlaceholder: string;
     sendAria: string;
-    localSummaryPrefix: string;
-    unopenedLabel: string;
-    openedLabel: string;
-    noteLabel: string;
   }
 > = {
   VI: {
     triggerLabel: 'Trợ lý AI',
     triggerAria: 'Mở Trợ lý AI tra cứu quy định SHE',
-    headerTitle: 'Trợ lý AI Quy Định Khối SHE',
+    headerTitle: 'Trợ lý AI',
     offlineSubtitle: 'Offline · Tìm kiếm thông minh cục bộ',
     clearTitle: 'Xóa đoạn chat hiện tại',
     closeAria: 'Đóng chatbox',
     welcome:
-      'Xin chào! Tôi là Trợ lý AI tra cứu Quy định bảo quản và hạn sử dụng thực phẩm Khối SHE — Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13, PB 00).',
+      'Xin chào! Tôi là Trợ lý AI tra cứu Quy định bảo quản và hạn sử dụng thực phẩm, tôi có thể giúp gì cho bạn?',
     resetMsg:
       'Đã làm mới hội thoại. Bạn cần tra cứu nhóm thực phẩm (SHE-01..66), danh mục không cấp đông (Điều 8) hay quy trình rã đông / làm nguội / ghi nhãn?',
     offlineBadge: 'Tra cứu cục bộ Offline',
-    loadingMsg: 'Đang đối chiếu Quy định SHE-QĐ-FB13...',
+    tier1Badge: 'Tra cứu tức thì (0 token)',
+    askDeeperBtn: 'Hỏi sâu AI',
+    loadingMsg: 'Đang tra cứu quy định...',
     sampleTitle: 'Gợi ý câu hỏi nhanh:',
     samples: [
-      'Quy trình rã đông và làm nguội theo QĐ 107/2026/QĐ-SHE/SG?',
+      'Thịt tươi bảo quản mát mấy ngày?',
+      'Quy định sữa đã mở nắp?',
+      'Hải sản đông lạnh nhiệt độ bao nhiêu?',
       'Những thực phẩm nào không được cấp đông theo Điều 8?',
-      'Sữa tươi thanh trùng/tiệt trùng mở hộp bảo quản được mấy ngày?',
     ],
     placeholder: 'Nhập bất kì thông tin liên quan bạn cần tư vấn',
+    followupPlaceholder: 'Hỏi nối tiếp (VD: Vậy còn nếu cấp đông thì sao?)...',
     sendAria: 'Gửi câu hỏi',
-    localSummaryPrefix: 'Kết quả tra cứu dữ liệu cục bộ trên máy',
-    unopenedLabel: 'Chưa mở',
-    openedLabel: 'Sau mở',
-    noteLabel: 'Lưu ý',
   },
   EN: {
     triggerLabel: 'AI Assistant',
     triggerAria: 'Open SHE Compliance AI Assistant',
-    headerTitle: 'SHE Regulation AI Assistant',
+    headerTitle: 'AI Assistant',
     offlineSubtitle: 'Offline · Smart Local Search',
     clearTitle: 'Clear current chat',
     closeAria: 'Close chatbox',
     welcome:
-      'Hello! I am the Food Storage & Shelf-Life AI Assistant for SHE Division — Decision 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13, Ver 00).',
+      'Hello! I am the AI Assistant for Food Storage & Shelf-Life lookup. How can I help you?',
     resetMsg:
       'Conversation cleared. Which SHE-01..66 food rule, Article 8 restriction, or thawing/cooling SOP would you like to check?',
     offlineBadge: 'Offline Local Lookup',
-    loadingMsg: 'Checking SHE-QĐ-FB13 compliance data...',
+    tier1Badge: 'Instant Lookup (0 tokens)',
+    askDeeperBtn: 'Ask AI deeper',
+    loadingMsg: 'Looking up regulation...',
     sampleTitle: 'Quick example questions:',
     samples: [
-      'What are the thawing and cooling procedures in SHE-QĐ-FB13?',
+      'How many days can fresh meat stay chilled?',
+      'What are the rules for opened milk?',
+      'What freezing temperature is required for seafood?',
       'Which foods cannot be frozen under Article 8?',
-      'How long can opened fresh milk be kept chilled?',
     ],
     placeholder: 'Enter any related information you need advice on',
+    followupPlaceholder: 'Ask follow-up (e.g. What if frozen?)...',
     sendAria: 'Send question',
-    localSummaryPrefix: 'Local offline database results',
-    unopenedLabel: 'Unopened',
-    openedLabel: 'Opened',
-    noteLabel: 'Note',
   },
   KO: {
     triggerLabel: 'AI 도우미',
     triggerAria: 'SHE 규정 조회 AI 도우미 열기',
-    headerTitle: 'SHE 식품 보관 AI 도우미',
+    headerTitle: 'AI 도우미',
     offlineSubtitle: '오프라인 · 로컬 스마트 검색',
     clearTitle: '현재 대화 지우기',
     closeAria: '채팅창 닫기',
     welcome:
-      '안녕하세요! SHE 식품 보관 및 소비기한 규정 AI 도우미입니다 — 결정 107/2026/QĐ-SHE/SG(SHE-QĐ-FB13, Ver 00) 기준을 정확히 안내합니다.',
+      '안녕하세요! 식품 보관 및 소비기한 규정 조회 AI 도우미입니다. 무엇을 도와드릴까요?',
     resetMsg:
       '대화가 초기화되었습니다. SHE-01..66 보관 기준, 제8조 냉동 금지 목록 또는 해동/냉각/라벨 규정을 질문해 주세요.',
     offlineBadge: '오프라인 로컬 조회',
-    loadingMsg: 'SHE-QĐ-FB13 규정 확인 중...',
+    tier1Badge: '즉시 조회 (0 토큰)',
+    askDeeperBtn: 'AI에게 자세히 묻기',
+    loadingMsg: '규정을 조회하는 중...',
     sampleTitle: '빠른 질문 예시:',
     samples: [
-      '107/2026/QĐ-SHE/SG의 해동 및 냉각 기준은 무엇인가요?',
+      '생고기는 냉장 보관 며칠까지 가능한가요?',
+      '개봉한 우유 보관 규정은 무엇인가요?',
+      '냉동 해산물 보관 온도는 얼마인가요?',
       '제8조에 따라 냉동 금지 식품은 무엇인가요?',
-      '개봉한 생우유는 냉장(0–5°C)에서 며칠간 보관하나요?',
     ],
     placeholder: '상담이 필요한 관련 정보를 무엇이든 입력하세요',
+    followupPlaceholder: '이어서 질문 (예: 냉동 보관 시에는요?)...',
     sendAria: '질문 보내기',
-    localSummaryPrefix: '기기 내 로컬 데이터 검색 결과',
-    unopenedLabel: '미개봉',
-    openedLabel: '개봉 후',
-    noteLabel: '비고',
   },
   HI: {
     triggerLabel: 'AI सहायक',
     triggerAria: 'SHE नियम AI सहायक खोलें',
-    headerTitle: 'SHE नियम AI सहायक',
+    headerTitle: 'AI सहायक',
     offlineSubtitle: 'ऑफ़लाइन · स्मार्ट लोकल सर्च',
     clearTitle: 'वर्तमान चैट साफ़ करें',
     closeAria: 'चैटबॉट बंद करें',
     welcome:
-      'नमस्ते! मैं SHE डिवीजन का खाद्य भंडारण और शेल्फ-लाइफ़ AI सहायक हूँ — निर्णय 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13, Ver 00) के अनुसार जानकारी प्रदान करता हूँ।',
+      'नमस्ते! मैं खाद्य भंडारण और शेल्फ-लाइफ़ नियम खोज AI सहायक हूँ, मैं आपकी क्या मदद कर सकता हूँ?',
     resetMsg:
       'वार्तालाप रीसेट हो गया है। आप कौन सा SHE-01..66 नियम, अनुच्छेद 8 सूची, या डीफ़्रॉस्टिंग/कूलिंग नियम देखना चाहते हैं?',
     offlineBadge: 'ऑफ़लाइन स्थानीय खोज',
-    loadingMsg: 'SHE-QĐ-FB13 डेटा की जाँच हो रही है...',
+    tier1Badge: 'तत्काल खोज (0 टोकन)',
+    askDeeperBtn: 'AI से विस्तार से पूछें',
+    loadingMsg: 'नियम की जाँच हो रही है...',
     sampleTitle: 'त्वरित प्रश्न उदाहरण:',
     samples: [
-      'SHE-QĐ-FB13 में डीफ़्रॉस्टिंग और कूलिंग प्रक्रिया क्या है?',
-      'अनुच्छेद 8 के अनुसार कौन-से खाद्य पदार्थ फ़्रीज़ नहीं किए जा सकते?',
-      'खुला हुआ ताज़ा दूध फ्रिज (0–5°C) में कितने दिन रखा जा सकता है?',
+      'ताज़ा मांस को फ्रिज में कितने दिन रख सकते हैं?',
+      'खुले दूध के भंडारण के नियम क्या हैं?',
+      'फ़्रोज़न सीफ़ूड का तापमान कितना होना चाहिए?',
+      'अनुच्छेद 8 के अनुसार कौन-से खाद्य फ़्रीज़ नहीं किए जा सकते?',
     ],
     placeholder: 'परामर्श के लिए कोई भी संबंधित जानकारी दर्ज करें',
+    followupPlaceholder: 'आगे पूछें (जैसे: अगर फ़्रीज़ किया हो तो?)...',
     sendAria: 'प्रश्न भेजें',
-    localSummaryPrefix: 'डिवाइस पर ऑफ़लाइन डेटा परिणाम',
-    unopenedLabel: 'बिना खुला',
-    openedLabel: 'खुलने के बाद',
-    noteLabel: 'नोट',
   },
 };
+
+function buildTier1InstantReply(matches: FoodItem[], lang: Lang): {
+  reply: string;
+  matchedCodes: string[];
+} {
+  const top = matches.slice(0, 4);
+  const codes = top.map((it) => getItemCode(it));
+
+  const labels: Record<
+    Lang,
+    {
+      room: string;
+      cool: string;
+      freeze: string;
+      note: string;
+      moreHint: (total: number) => string;
+      cite: string;
+    }
+  > = {
+    VI: {
+      room: 'Phòng (15–25°C)',
+      cool: 'Lạnh (0–5°C)',
+      freeze: 'Đông (≤ −18°C)',
+      note: 'Lưu ý',
+      moreHint: (total) =>
+        `\n_Còn ${total - 4} mục liên quan khác trong bảng — xem chi tiết hoặc bấm **Hỏi sâu AI** nếu cần tư vấn tình huống._`,
+      cite: '\n*Căn cứ: Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13).*',
+    },
+    EN: {
+      room: 'Room (15–25°C)',
+      cool: 'Chilled (0–5°C)',
+      freeze: 'Frozen (≤ −18°C)',
+      note: 'Note',
+      moreHint: (total) =>
+        `\n_${total - 4} additional related item(s) exist in the table — click **Ask AI deeper** for scenario advice._`,
+      cite: '\n*Basis: Decision 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13).*',
+    },
+    KO: {
+      room: '실온 (15–25°C)',
+      cool: '냉장 (0–5°C)',
+      freeze: '냉동 (≤ −18°C)',
+      note: '비고',
+      moreHint: (total) =>
+        `\n_표에 관련 항목이 ${total - 4}개 더 있습니다. 상황별 안내가 필요하면 **AI에게 자세히 묻기**를 누르세요._`,
+      cite: '\n*근거: 결정 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13).*',
+    },
+    HI: {
+      room: 'कमरा (15–25°C)',
+      cool: 'ठंडा (0–5°C)',
+      freeze: 'फ़्रीज़ (≤ −18°C)',
+      note: 'नोट',
+      moreHint: (total) =>
+        `\n_तालिका में ${total - 4} अन्य संबंधित आइटम हैं — स्थितिजन्य सलाह के लिए **AI से विस्तार से पूछें** दबाएँ._`,
+      cite: '\n*आधार: निर्णय 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13).*',
+    },
+  };
+
+  const T = labels[lang];
+  const lines = top.map((it) => {
+    const code = getItemCode(it);
+    const name = translateItemName(it, lang);
+    const group = translateGroup(it.g, lang);
+    const cells: string[] = [];
+    if (!isEmptyCell(it.room)) {
+      cells.push(`${T.room}: **${translateDuration(it.room, lang)}**`);
+    }
+    if (!isEmptyCell(it.cool)) {
+      cells.push(`${T.cool}: **${translateDuration(it.cool, lang)}**`);
+    }
+    if (!isEmptyCell(it.freeze)) {
+      cells.push(`${T.freeze}: **${translateDuration(it.freeze, lang)}**`);
+    }
+    const noteText = !isEmptyCell(it.note)
+      ? ` — _${T.note}: ${translateItemNote(it, lang)}_`
+      : '';
+    return `• **[${code}] ${name}** (${group}): ${cells.join(' · ')}${noteText}`;
+  });
+
+  if (matches.length > 4) {
+    lines.push(T.moreHint(matches.length));
+  }
+  lines.push(T.cite);
+  return {
+    reply: lines.join('\n'),
+    matchedCodes: codes,
+  };
+}
 
 export function AIChatbox({
   items,
   lang,
   isOnline,
   onSelectItem,
+  externalPrompt,
 }: AIChatboxProps) {
   const L = CHAT_TEXT[lang];
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streamingReply, setStreamingReply] = useState('');
+  const [apiErrorBanner, setApiErrorBanner] = useState('');
   const [paginationState, setPaginationState] =
     useState<ChatPaginationState | null>(null);
   const [pendingDisambiguation, setPendingDisambiguation] =
@@ -182,6 +286,16 @@ export function AIChatbox({
   ]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const handledExternalIdRef = useRef<number>(0);
+  const sendMessageRef = useRef<
+    (textOverride?: string, options?: { forceTier2?: boolean }) => Promise<void>
+  >(async () => {});
+
+  const knownCodes = useMemo(
+    () => new Set(items.map((it) => getItemCode(it).toUpperCase())),
+    [items]
+  );
 
   // Sync initial greeting automatically when user switches language before starting a chat
   useEffect(() => {
@@ -197,12 +311,38 @@ export function AIChatbox({
     if (open && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [open, turns, loading]);
+  }, [open, turns, loading, streamingReply]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      externalPrompt &&
+      externalPrompt.text.trim() &&
+      externalPrompt.id !== handledExternalIdRef.current
+    ) {
+      handledExternalIdRef.current = externalPrompt.id;
+      setOpen(true);
+      void sendMessageRef.current(externalPrompt.text.trim(), { forceTier2: true });
+    }
+  }, [externalPrompt]);
 
   const findItemByCode = (code: string) =>
     items.find((it) => getItemCode(it).toUpperCase() === code.toUpperCase());
 
-  const sendMessage = async (textOverride?: string) => {
+  const handleSelectCode = (code: string) => {
+    const item = findItemByCode(code);
+    if (item) onSelectItem(item);
+  };
+
+  const sendMessage = async (
+    textOverride?: string,
+    options?: { forceTier2?: boolean }
+  ) => {
     const question = (textOverride ?? input).trim();
     if (!question || loading) return;
 
@@ -215,34 +355,8 @@ export function AIChatbox({
     const updatedTurns = [...turns, userTurn].slice(-20);
     setTurns(updatedTurns);
     if (!textOverride) setInput('');
-    setLoading(true);
-
-    const compactCatalog = items.map((it) => ({
-      code: getItemCode(it),
-      g: it.g,
-      name: it.name,
-      enName: it.enName || translateItemName(it, 'EN'),
-      room: it.room,
-      cool: it.cool,
-      freeze: it.freeze,
-      standardTemp: it.standardTemp || '',
-      shelfLifeUnopened: it.shelfLifeUnopened || '',
-      shelfLifeOpened: it.shelfLifeOpened || '',
-      packagingSpec: it.packagingSpec || '',
-      note: it.note,
-      haccpNote: it.haccpNote || it.flag || '',
-      customFields: it.customFields || {},
-    }));
-
-    // Preserve up to 10 conversation turns (20 messages)
-    const historyPayload = updatedTurns.slice(-20).map((t) => ({
-      role: t.role,
-      content: t.content,
-    }));
-
-    let assistantReply = '';
-    let matchedCodes: string[] = [];
-    let mode: 'online_ai' | 'offline_local' = isOnline ? 'online_ai' : 'offline_local';
+    setStreamingReply('');
+    setApiErrorBanner('');
 
     const localEngineResult = resolveChatQueryLocally(
       question,
@@ -253,94 +367,138 @@ export function AIChatbox({
       turns
     );
 
-    setPaginationState(localEngineResult.nextPagination);
-    setPendingDisambiguation(localEngineResult.nextDisambiguation);
+    const activeLang = localEngineResult.detectedLang;
+    const tier1Matches = runSmartSearch({
+      items,
+      query: question,
+      lang: activeLang,
+    });
 
-    if (localEngineResult.handled) {
-      assistantReply = localEngineResult.reply;
-      matchedCodes = localEngineResult.matchedCodes;
-    } else if (!isOnline || window.location.protocol === 'file:') {
-      mode = 'offline_local';
-      const fallback = buildNotFoundFallbackReply(
+    const useTier2 =
+      Boolean(options?.forceTier2) ||
+      shouldRouteToGeminiTier2(
         question,
-        items,
-        localEngineResult.detectedLang,
-        localEngineResult.extractedKeyword
+        tier1Matches.length,
+        turns.length > 1
       );
-      assistantReply = fallback.reply;
-      matchedCodes = fallback.matchedCodes;
-    } else {
-      try {
-        const res = await fetch('/api/ai-chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: question,
-            lang: localEngineResult.detectedLang,
-            history: historyPayload,
-            catalog: compactCatalog,
-          }),
-        });
 
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+    // TIER 1 (0 Token, <0.01s): Pure item/code lookup answered instantaneously on client
+    if (!useTier2 && tier1Matches.length > 0) {
+      const instant = buildTier1InstantReply(tier1Matches, activeLang);
+      const aiTurn: AiChatTurn = {
+        role: 'assistant',
+        content: instant.reply,
+        matchedCodes: instant.matchedCodes,
+        mode: 'tier1_instant',
+        deepPrompt: question,
+        timestamp: Date.now(),
+      };
+      setTurns((prev) => [...prev, aiTurn].slice(-20));
+      void recordAiHistory({
+        question,
+        answer: instant.reply,
+        matchedCodes: instant.matchedCodes,
+        mode: 'tier1_instant',
+        timestamp: Date.now(),
+      });
+      return;
+    }
 
-        const data = (await res.json()) as {
-          reply?: string;
-          matchedCodes?: string[];
-        };
-        const apiReply =
-          typeof data.reply === 'string' ? data.reply.trim() : '';
-        const apiCodes = Array.isArray(data.matchedCodes)
-          ? data.matchedCodes
-          : [];
+    // TIER 2 (Gemini 2.5 Flash — concise, 2-3 turn history cap) or Offline fallback
+    setLoading(true);
+    const historyPayload = buildHistoryPayload(updatedTurns.slice(0, -1));
 
-        if (!apiReply || apiReply === NOT_FOUND_MESSAGE) {
-          const fallback = buildNotFoundFallbackReply(
-            question,
-            items,
-            localEngineResult.detectedLang,
-            localEngineResult.extractedKeyword
-          );
-          assistantReply = fallback.reply;
-          matchedCodes = fallback.matchedCodes;
-        } else {
-          assistantReply = apiReply;
-          matchedCodes = apiCodes;
-        }
-      } catch {
-        mode = 'offline_local';
+    let assistantReply = '';
+    let matchedCodes: string[] = [];
+    let mode: 'online_ai' | 'offline_local' = isOnline ? 'online_ai' : 'offline_local';
+
+    if (!isOnline || window.location.protocol === 'file:') {
+      mode = 'offline_local';
+      setPaginationState(localEngineResult.nextPagination);
+      setPendingDisambiguation(localEngineResult.nextDisambiguation);
+      if (localEngineResult.handled) {
+        assistantReply = localEngineResult.reply;
+        matchedCodes = localEngineResult.matchedCodes;
+      } else {
         const fallback = buildNotFoundFallbackReply(
           question,
           items,
-          localEngineResult.detectedLang,
+          activeLang,
           localEngineResult.extractedKeyword
         );
         assistantReply = fallback.reply;
         matchedCodes = fallback.matchedCodes;
       }
+    } else {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        const streamResult = await streamAskGemini({
+          message: question,
+          lang: activeLang,
+          history: historyPayload,
+          items,
+          signal: controller.signal,
+          onDelta: (accumulated) => {
+            setStreamingReply(accumulated);
+          },
+        });
+
+        assistantReply = streamResult.reply;
+        matchedCodes = streamResult.matchedCodes;
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') {
+          setLoading(false);
+          setStreamingReply('');
+          return;
+        }
+        const errMsg =
+          err instanceof AiStreamHttpError
+            ? err.message
+            : 'Không thể kết nối Gemini API lúc này.';
+        setApiErrorBanner(errMsg);
+        mode = 'offline_local';
+        if (localEngineResult.handled) {
+          assistantReply = localEngineResult.reply;
+          matchedCodes = localEngineResult.matchedCodes;
+        } else {
+          const fallback = buildNotFoundFallbackReply(
+            question,
+            items,
+            activeLang,
+            localEngineResult.extractedKeyword
+          );
+          assistantReply = fallback.reply;
+          matchedCodes = fallback.matchedCodes;
+        }
+      }
     }
 
-    const aiTurn: AiChatTurn = {
-      role: 'assistant',
-      content: assistantReply,
-      matchedCodes,
-      mode,
-      timestamp: Date.now(),
-    };
+    if (assistantReply) {
+      const aiTurn: AiChatTurn = {
+        role: 'assistant',
+        content: assistantReply,
+        matchedCodes,
+        mode,
+        timestamp: Date.now(),
+      };
+      setTurns((prev) => [...prev, aiTurn].slice(-20));
+      void recordAiHistory({
+        question,
+        answer: assistantReply,
+        matchedCodes,
+        mode,
+        timestamp: Date.now(),
+      });
+    }
 
-    setTurns((prev) => [...prev, aiTurn].slice(-20));
+    setStreamingReply('');
     setLoading(false);
-
-    void recordAiHistory({
-      question,
-      answer: assistantReply,
-      matchedCodes,
-      mode,
-      timestamp: Date.now(),
-    });
   };
+
+  sendMessageRef.current = sendMessage;
 
   return (
     <>
@@ -366,7 +524,7 @@ export function AIChatbox({
         <div
           role="dialog"
           aria-label={L.headerTitle}
-          className="sheet-up fixed bottom-0 right-0 sm:bottom-5 sm:right-5 z-[60] w-full sm:w-[410px] h-[82dvh] sm:h-[560px] flex flex-col bg-white border border-[#DFD9CB] rounded-t-[24px] sm:rounded-[20px] shadow-[0_24px_56px_rgba(15,23,42,0.28)] overflow-hidden"
+          className="sheet-up fixed bottom-0 right-0 sm:bottom-5 sm:right-5 z-[60] w-full sm:w-[430px] h-[84dvh] sm:h-[580px] flex flex-col bg-white border border-[#DFD9CB] rounded-t-[24px] sm:rounded-[20px] shadow-[0_24px_56px_rgba(15,23,42,0.28)] overflow-hidden"
         >
           {/* Chat Header */}
           <div className="bg-[#122A47] text-white px-4 py-3 border-b border-[#C9A227]/60 flex items-center justify-between gap-2 shrink-0">
@@ -392,6 +550,10 @@ export function AIChatbox({
                 type="button"
                 title={L.clearTitle}
                 onClick={() => {
+                  abortRef.current?.abort();
+                  setLoading(false);
+                  setStreamingReply('');
+                  setApiErrorBanner('');
                   setPaginationState(null);
                   setPendingDisambiguation(null);
                   setTurns([
@@ -422,6 +584,13 @@ export function AIChatbox({
             ref={scrollRef}
             className="flex-1 overflow-y-auto p-3.5 space-y-3 bg-[#F6F4EF]"
           >
+            {apiErrorBanner && (
+              <div className="rounded-xl border border-[#FCD34D] bg-[#FFFBEB] px-3 py-2 text-[11.5px] font-semibold text-[#92400E] flex items-start gap-2">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>{apiErrorBanner}</span>
+              </div>
+            )}
+
             {turns.map((turn, idx) => (
               <div
                 key={`${turn.timestamp}-${idx}`}
@@ -430,23 +599,40 @@ export function AIChatbox({
                 }`}
               >
                 <div
-                  className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-line ${
+                  className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
                     turn.role === 'user'
-                      ? 'bg-[#122A47] text-white rounded-br-sm'
+                      ? 'bg-[#122A47] text-white rounded-br-sm whitespace-pre-line'
                       : 'bg-white border border-[#E2DDD0] text-[#182230] rounded-bl-sm shadow-xs'
                   }`}
                 >
                   {turn.mode === 'offline_local' && (
-                    <span className="mb-1 inline-flex items-center gap-1 rounded bg-[#FDF8EB] border border-[#E8D9A8] px-1.5 py-0.5 text-[10px] font-bold text-[#8A6510]">
+                    <span className="mb-1.5 inline-flex items-center gap-1 rounded bg-[#FDF8EB] border border-[#E8D9A8] px-1.5 py-0.5 text-[10px] font-bold text-[#8A6510]">
                       <WifiOff size={10} />
                       {L.offlineBadge}
                     </span>
                   )}
-                  <div>{turn.content}</div>
 
-                  {turn.matchedCodes && turn.matchedCodes.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-[#EAE5DA] flex flex-wrap gap-1.5">
-                      {turn.matchedCodes.map((code) => {
+                  {turn.mode === 'tier1_instant' && (
+                    <span className="mb-1.5 inline-flex items-center gap-1 rounded bg-[#EEF6F8] border border-[#C6DCE5] px-1.5 py-0.5 text-[10px] font-bold text-[#0F5E6E]">
+                      <Zap size={10} />
+                      {L.tier1Badge}
+                    </span>
+                  )}
+
+                  {turn.role === 'user' ? (
+                    <div>{turn.content}</div>
+                  ) : (
+                    <FormattedAiText
+                      text={turn.content}
+                      knownCodes={knownCodes}
+                      onSelectCode={handleSelectCode}
+                    />
+                  )}
+
+                  {((turn.matchedCodes && turn.matchedCodes.length > 0) ||
+                    (turn.mode === 'tier1_instant' && turn.deepPrompt && isOnline)) && (
+                    <div className="mt-2 pt-2 border-t border-[#EAE5DA] flex flex-wrap items-center gap-1.5">
+                      {turn.matchedCodes?.map((code) => {
                         const item = findItemByCode(code);
                         const labelName = item
                           ? translateItemName(item, lang)
@@ -468,6 +654,23 @@ export function AIChatbox({
                           </button>
                         );
                       })}
+
+                      {turn.mode === 'tier1_instant' && turn.deepPrompt && isOnline && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() =>
+                            void sendMessage(
+                              `${turn.deepPrompt} — giải thích chi tiết các tình huống & lưu ý bảo quản`,
+                              { forceTier2: true }
+                            )
+                          }
+                          className="ml-auto px-2 py-0.5 rounded-md bg-[#122A47] hover:bg-[#1E4A75] text-white text-[11px] font-bold inline-flex items-center gap-1 transition-colors"
+                        >
+                          <Sparkles size={11} className="text-[#E2C665]" />
+                          <span>{L.askDeeperBtn}</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -475,10 +678,19 @@ export function AIChatbox({
             ))}
 
             {loading && (
-              <div className="flex items-start">
-                <div className="rounded-2xl rounded-bl-sm bg-white border border-[#E2DDD0] px-3.5 py-2.5 text-[12.5px] text-[#5C6573] flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin text-[#1E4A75]" />
-                  <span>{L.loadingMsg}</span>
+              <div className="flex flex-col items-start">
+                <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-white border border-[#D4E2EA] px-3.5 py-2.5 text-[13px] text-[#182230] shadow-xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-[#1E4A75]">
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>{L.loadingMsg}</span>
+                  </div>
+                  {streamingReply && (
+                    <FormattedAiText
+                      text={streamingReply}
+                      knownCodes={knownCodes}
+                      onSelectCode={handleSelectCode}
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -519,7 +731,7 @@ export function AIChatbox({
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={L.placeholder}
+              placeholder={turns.length > 1 ? L.followupPlaceholder : L.placeholder}
               className="flex-1 h-10 rounded-xl border border-[#D8D2C2] focus:border-[#1E4A75] bg-[#FAF9F6] px-3 text-[13px] font-medium text-[#182230]"
             />
             <button

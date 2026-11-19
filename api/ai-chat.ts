@@ -1,28 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
-import { FOOD_ITEMS, getItemCode } from '../src/data/foodData';
-import { serializeSheRegulationForAiPrompt } from '../src/data/sheRegulationData';
+import { Type, type Content } from '@google/genai';
+import {
+  buildSheGeminiSystemInstruction,
+  extractMatchedCodesFromText,
+} from '../src/utils/aiPromptBuilder';
+import {
+  createServerGeminiClient,
+  generateContentWithFlashFallback,
+} from '../src/server/geminiClient';
 import type { Lang } from '../src/types';
-
-const NOT_FOUND_RESPONSE =
-  'Không tìm thấy kết quả trong dữ liệu hệ thống, vui lòng liên hệ Quản lý trực tiếp để được hướng dẫn.';
-
-interface CatalogEntry {
-  code: string;
-  g: string;
-  name: string;
-  enName?: string;
-  room: string;
-  cool: string;
-  freeze: string;
-  standardTemp?: string;
-  shelfLifeUnopened?: string;
-  shelfLifeOpened?: string;
-  packagingSpec?: string;
-  note: string;
-  haccpNote?: string;
-  customFields?: Record<string, string>;
-}
 
 interface HistoryTurn {
   role: 'user' | 'assistant';
@@ -64,57 +50,6 @@ async function readJsonBody(req: VercelReq): Promise<Record<string, unknown>> {
   }
 }
 
-function serializeCatalog(rawCatalog: unknown): {
-  text: string;
-  validCodes: Set<string>;
-} {
-  const entries: CatalogEntry[] =
-    Array.isArray(rawCatalog) && rawCatalog.length > 0
-      ? rawCatalog
-          .filter((x): x is CatalogEntry => Boolean(x && typeof x === 'object'))
-          .slice(0, 600)
-      : FOOD_ITEMS.map((item) => ({
-          code: getItemCode(item),
-          g: item.g,
-          name: item.name,
-          enName: item.enName || '',
-          room: item.room,
-          cool: item.cool,
-          freeze: item.freeze,
-          note: item.note,
-          haccpNote: item.flag || '',
-        }));
-
-  const validCodes = new Set<string>();
-  const lines = entries.map((item) => {
-    const code = String(item.code || '').trim().toUpperCase();
-    if (code) validCodes.add(code);
-    const parts = [
-      code,
-      item.g,
-      item.name,
-      item.enName || '',
-      `Room(15-25C):${item.room}`,
-      `Cool(0-5C):${item.cool}`,
-      `Freeze(<=-18C):${item.freeze}`,
-    ];
-    if (item.standardTemp) parts.push(`StdTemp:${item.standardTemp}`);
-    if (item.shelfLifeUnopened) parts.push(`Unopened:${item.shelfLifeUnopened}`);
-    if (item.shelfLifeOpened) parts.push(`Opened:${item.shelfLifeOpened}`);
-    if (item.packagingSpec) parts.push(`Packaging:${item.packagingSpec}`);
-    if (item.note && item.note !== '—') parts.push(`Note:${item.note}`);
-    if (item.haccpNote) parts.push(`HACCP/QA:${item.haccpNote}`);
-    if (item.customFields && typeof item.customFields === 'object') {
-      for (const [k, v] of Object.entries(item.customFields)) {
-        if (v && String(v).trim()) parts.push(`${k}:${String(v).trim()}`);
-      }
-    }
-    return parts.filter(Boolean).join(' | ');
-  });
-
-  return { text: lines.join('\n'), validCodes };
-}
-
 export default async function handler(req: VercelReq, res: ServerResponse) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'METHOD_NOT_ALLOWED', reply: '', matchedCodes: [] });
@@ -128,20 +63,23 @@ export default async function handler(req: VercelReq, res: ServerResponse) {
     const lang: Lang =
       rawLang === 'EN' || rawLang === 'KO' || rawLang === 'HI' ? rawLang : 'VI';
 
-    if (!message || message.length > 600) {
+    if (!message || message.length > 1000) {
       sendJson(res, 400, { error: 'INVALID_MESSAGE', reply: '', matchedCodes: [] });
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const ai = createServerGeminiClient();
+    if (!ai) {
       sendJson(res, 503, { error: 'AI_UNAVAILABLE', reply: '', matchedCodes: [] });
       return;
     }
 
-    const { text: catalogText, validCodes } = serializeCatalog(body.catalog);
+    const { systemInstruction, validCodes } = buildSheGeminiSystemInstruction(
+      body.catalog,
+      lang
+    );
 
-    const historyTurns: HistoryTurn[] = Array.isArray(body.history)
+    const rawHistory = Array.isArray(body.history)
       ? body.history
           .filter(
             (h): h is HistoryTurn =>
@@ -150,93 +88,63 @@ export default async function handler(req: VercelReq, res: ServerResponse) {
                   typeof h === 'object' &&
                   ((h as HistoryTurn).role === 'user' ||
                     (h as HistoryTurn).role === 'assistant') &&
-                  typeof (h as HistoryTurn).content === 'string'
+                  typeof (h as HistoryTurn).content === 'string' &&
+                  (h as HistoryTurn).content.trim()
               )
           )
-          .slice(-20)
+          .slice(-6)
       : [];
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+    const contents: Content[] = rawHistory.map((turn) => ({
+      role: turn.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: turn.content.trim() }],
+    }));
 
-    const sheKnowledgeText = serializeSheRegulationForAiPrompt();
-    const systemInstruction = `You are the strict F&B Food Safety Compliance AI Assistant for Sun Group SHE Division, operating strictly on Quyết định 107/2026/QĐ-SHE/SG (Mã hiệu: SHE-QĐ-FB13, Phiên bản 00, Hiệu lực 12/11/2026).
-CRITICAL ANTI-HALLUCINATION PROTOCOL (MUST FOLLOW 100%):
-1. Ground EVERY fact exclusively in the OFFICIAL SHE-QĐ-FB13 CATALOG AND REGULATION KNOWLEDGE BASE below.
-2. NEVER guess, estimate, extrapolate, use outside culinary assumptions, or invent any temperature, duration, shelf life, or rule not explicitly written below.
-3. Preserve "Không", "Không cấp đông", "Theo NSX", and "—" EXACTLY. Never turn "Không" or "Không cấp đông" into a duration. When listing an item, use the concise format:
-   - [SHE-xx] Original Vietnamese Name
-     Phòng (15–25°C): ... | Lạnh (0–5°C): ... | Đông (≤ −18°C): ... | Lưu ý: ...
-   (Translate labels like Room / Chilled / Frozen / Note into the question's language if EN/KO/HI, while ALWAYS keeping [SHE-xx] and the original Vietnamese name.)
-4. Strict Vietnamese diacritics: NEVER confuse "bơ" (butter) with "bò" (beef), or "dứa" (pineapple) with "dừa" (coconut). If the user writes unaccented "bo" or "dua" ambiguously, do not guess—ask "Bạn ý là bơ hay bò?" or "Bạn ý là dứa hay dừa?" and list both options.
-5. Multi-turn follow-up resolution: If the user asks a follow-up ("cái đó", "nó", "món vừa rồi", "cái thứ 2", "that item", "freezing?"), resolve strictly from Recent conversation AND verify every figure against the SHE-QĐ-FB13 data below.
-6. Missing or unsupported questions: If the product, operational rule, or question is NOT present in SHE-QĐ-FB13 below, set notFound=true and set reply EXACTLY verbatim to:
-"${NOT_FOUND_RESPONSE}"
-7. Output Language & Style: Auto-detect the language of the user's question (${lang} fallback), cite exact codes [SHE-xx] and Articles/Sections (Điều 1–9), and end grounded answers with: "Bản trích lục tuân thủ Quyết định 107/2026/QĐ-SHE/SG (SHE-QĐ-FB13). Không thay thế văn bản gốc; khi có mâu thuẫn, ưu tiên văn bản gốc và khuyến cáo NSX trên bao bì." (or its equivalent in the question language). Keep matchedCodes aligned strictly with cited SHE-xx codes.
+    const lastTurn = contents[contents.length - 1];
+    if (
+      !lastTurn ||
+      lastTurn.role !== 'user' ||
+      lastTurn.parts?.[0]?.text !== message
+    ) {
+      contents.push({
+        role: 'user',
+        parts: [{ text: message }],
+      });
+    }
 
-ACTIVE SHE DATABASE CATALOG (including any Admin updates):
-${catalogText}
-
-${sheKnowledgeText}`;
-
-    const conversationContext = historyTurns
-      .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
-      .join('\n');
-
-    const prompt = conversationContext
-      ? `Recent conversation (up to 10 turns):\n${conversationContext}\n\nLatest User Question: "${message}"`
-      : `User Question: "${message}"`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            reply: {
-              type: Type.STRING,
-              description:
-                'Concise bullet-point answer strictly grounded in SHE-QĐ-FB13, or exact NOT_FOUND_RESPONSE when absent.',
-            },
-            matchedCodes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'Exact SHE-xx item codes cited in the answer (max 15).',
-            },
-            notFound: {
-              type: Type.BOOLEAN,
-              description: 'True only when no grounded answer exists in SHE-QĐ-FB13.',
-            },
+    const response = await generateContentWithFlashFallback(ai, {
+      contents,
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          reply: {
+            type: Type.STRING,
+            description:
+              'Concise bullet-point answer strictly grounded in the regulation dataset, bolding temperatures and shelf lives.',
           },
-          required: ['reply', 'matchedCodes', 'notFound'],
+          matchedCodes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Exact catalog item codes cited in the answer (max 15).',
+          },
         },
+        required: ['reply', 'matchedCodes'],
       },
     });
 
     const rawText = (response.text ?? '{}').trim();
-    let parsed: {
-      reply?: unknown;
-      matchedCodes?: unknown;
-      notFound?: unknown;
-    } = {};
+    let parsed: { reply?: unknown; matchedCodes?: unknown } = {};
     try {
       parsed = JSON.parse(rawText);
     } catch {
-      parsed = {};
+      parsed = { reply: rawText };
     }
 
+    const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
     const seen = new Set<string>();
-    const matchedCodes = Array.isArray(parsed.matchedCodes)
+    const schemaCodes = Array.isArray(parsed.matchedCodes)
       ? parsed.matchedCodes
           .filter((c): c is string => typeof c === 'string')
           .map((c) => c.trim().toUpperCase())
@@ -248,12 +156,10 @@ ${sheKnowledgeText}`;
           .slice(0, 15)
       : [];
 
-    const reply =
-      parsed.notFound === true ||
-      typeof parsed.reply !== 'string' ||
-      !parsed.reply.trim()
-        ? NOT_FOUND_RESPONSE
-        : parsed.reply.trim();
+    const matchedCodes =
+      schemaCodes.length > 0
+        ? schemaCodes
+        : extractMatchedCodesFromText(reply, validCodes);
 
     sendJson(res, 200, { reply, matchedCodes });
   } catch (err: unknown) {

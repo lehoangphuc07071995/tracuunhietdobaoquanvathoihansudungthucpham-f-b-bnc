@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { FOOD_ITEMS, getItemCode } from '../src/data/foodData';
+import {
+  createServerGeminiClient,
+  generateContentWithFlashFallback,
+} from '../src/server/geminiClient';
 import type { Lang } from '../src/types';
 
 const VALID_ITEM_CODES = new Set(FOOD_ITEMS.map((item) => getItemCode(item)));
@@ -88,20 +92,11 @@ export default async function handler(req: VercelReq, res: ServerResponse) {
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const ai = createServerGeminiClient();
+    if (!ai) {
       sendJson(res, 503, { error: 'AI_UNAVAILABLE', matchedCodes: [], reason: '' });
       return;
     }
-
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
 
     const systemInstruction = `You are a food hygiene and F&B storage compliance search assistant for Sun Group SHE Division (Quyết định 107/2026/QĐ-SHE/SG, Code SHE-QĐ-FB13).
 Your ONLY job is to map the user's search query (natural language, ingredients, recipes, kitchen terms, typos, storage temperature conditions, shelf-life rules, Vietnamese without accents, English, Korean, or Hindi) to the exact matching item codes in the official 66-item SHE-QĐ-FB13 Food Storage & Shelf Life Catalog below.
@@ -116,29 +111,25 @@ CRITICAL LEGAL & DATA INTEGRITY RULES:
 OFFICIAL SHE-QĐ-FB13 CATALOG (Code | Group | Name | EnName | Room 15-25C | Cool 0-5C | Freeze <=-18C | Keywords | Note | QA):
 ${COMPACT_CATALOG}`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateContentWithFlashFallback(ai, {
       contents: `User query (${LANG_LABEL[lang]}): "${rawQuery}"`,
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            matchedCodes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description:
-                'Exact official SHE item codes from the catalog ordered by relevance (max 24).',
-            },
-            reason: {
-              type: Type.STRING,
-              description: `One short, clear sentence in ${LANG_LABEL[lang]} explaining the search match.`,
-            },
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          matchedCodes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description:
+              'Exact official SHE item codes from the catalog ordered by relevance (max 24).',
           },
-          required: ['matchedCodes', 'reason'],
+          reason: {
+            type: Type.STRING,
+            description: `One short, clear sentence in ${LANG_LABEL[lang]} explaining the search match.`,
+          },
         },
+        required: ['matchedCodes', 'reason'],
       },
     });
 

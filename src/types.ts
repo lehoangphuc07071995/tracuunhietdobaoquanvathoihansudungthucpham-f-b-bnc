@@ -54,6 +54,9 @@ export interface SystemConfig {
   appLockPin?: string;
   customColumns?: CustomColumnDef[];
   autoSyncCloud?: boolean;
+  footerLeftText?: string;
+  footerRightText?: string;
+  aiAssistantEnabled?: boolean;
   updatedAt: number;
 }
 
@@ -100,7 +103,8 @@ export interface AiChatTurn {
   role: 'user' | 'assistant';
   content: string;
   matchedCodes?: string[];
-  mode?: 'online_ai' | 'offline_local';
+  mode?: 'online_ai' | 'offline_local' | 'tier1_instant';
+  deepPrompt?: string;
   timestamp: number;
 }
 
@@ -109,7 +113,7 @@ export interface AiHistoryEntry {
   question: string;
   answer: string;
   matchedCodes: string[];
-  mode: 'online_ai' | 'offline_local';
+  mode: 'online_ai' | 'offline_local' | 'tier1_instant';
   timestamp: number;
 }
 

@@ -2,320 +2,307 @@ import {
   getItemCode,
   hasCellValue,
   hasUseToday,
-  isEmptyCell,
   isNoFreezeCell,
 } from '../data/foodData';
 import {
   translateGroup,
   translateItemName,
-  translateItemNote,
 } from '../data/translations';
 import type { FoodItem, Lang } from '../types';
 
-const COMPOUND_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/so\s*co\s*la|sô\s*cô\s*la/g, 'socola'],
-  [/pho\s*mai/g, 'phomai'],
-  [/banh\s*m[iy]/g, 'banhmi'],
-  [/banh\s*bao/g, 'banhbao'],
-  [/banh\s*kem/g, 'banhkem'],
-  [/banh\s*ngot/g, 'banhngot'],
-  [/banh\s*quy/g, 'banhquy'],
-  [/banh\s*cuon/g, 'banhcuon'],
-  [/ha\s*cao/g, 'hacao'],
-  [/ca\s*phe/g, 'caphe'],
-  [/ca\s*hoi/g, 'cahoi'],
-  [/thit\s*bo/g, 'thitbo'],
-  [/thit\s*heo/g, 'thitheo'],
-  [/thit\s*ga/g, 'thitga'],
-  [/thit\s*xay/g, 'thitxay'],
-  [/gia\s*cam/g, 'giacam'],
-  [/hai\s*san/g, 'haisan'],
-  [/thuy\s*san/g, 'thuysan'],
-  [/gio\s*cha/g, 'giocha'],
-  [/cha\s*lua/g, 'chalua'],
-  [/dau\s*hu|dau\s*phu/g, 'dauhu'],
-  [/sua\s*tuoi/g, 'suatuoi'],
-  [/sua\s*dac/g, 'suadac'],
-  [/sua\s*chua/g, 'suachua'],
-  [/kem\s*tuoi/g, 'kemtuoi'],
-  [/long\s*do/g, 'longdo'],
-  [/long\s*trang/g, 'longtrang'],
-  [/trai\s*cay/g, 'traicay'],
-  [/rau\s*cu/g, 'raucu'],
-  [/khoai\s*tay/g, 'khoaitay'],
-  [/com\s*trang/g, 'comtrang'],
-  [/nuoc\s*cot\s*dua|cot\s*dua/g, 'cotdua'],
-  [/nuoc\s*ep/g, 'nuocep'],
-  [/nuoc\s*mam/g, 'nuocmam'],
-  [/nuoc\s*tuong/g, 'nuoctuong'],
-  [/dau\s*an/g, 'dauan'],
-  [/bap\s*rang\s*bo/g, 'baprangbo'],
-  [/yen\s*mach/g, 'yenmach'],
-  [/nhiet\s*do\s*phong|15\s*[-–]\s*25/g, 'nhietdophong'],
-  [/nhiet\s*do\s*lanh|tu\s*mat|kho\s*mat|kho\s*lanh|tu\s*lanh|0\s*[-–]\s*5/g, 'kholanh'],
-  [/khong\s*cap\s*dong/g, 'khongcapdong'],
-  [/nhiet\s*do\s*dong|cap\s*dong|kho\s*dong|tu\s*dong|-?\s*18/g, 'khodong'],
-  [/trong\s*ngay|theo\s*gio/g, 'trongngay'],
-  [/ra\s*dong/g, 'radong'],
-  [/hut\s*chan\s*khong/g, 'hutchankhong'],
-  [/\b(?:unsalted|salted|melted)\s*butter\b/g, 'butter'],
-  [/\bbo\s*(?:lat|man|nhat|thuc\s*vat|anchor|president)\b/g, 'bo'],
-];
+const VN_ACCENTED_CHAR_RE =
+  /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i;
 
-const SEARCH_SYNONYMS: Record<string, string> = {
-  // Dairy & Egg
-  cheese: 'phomai',
-  mascarpone: 'phomai',
-  cheddar: 'phomai',
-  mozzarella: 'phomai',
-  parmesan: 'phomai',
-  brie: 'phomai',
-  feta: 'phomai',
-  gouda: 'phomai',
-  camembert: 'phomai',
-  ricotta: 'phomai',
-  creamcheese: 'phomai',
-  butter: 'bo',
-  margarine: 'bo',
-  whipping: 'kem',
-  cream: 'kem',
-  gelato: 'kem',
-  sorbet: 'kem',
-  icecream: 'kem',
-  milk: 'sua',
-  yogurt: 'suachua',
-  yoghurt: 'suachua',
-  egg: 'trung',
-  eggs: 'trung',
-  // Chocolate / Bakery / Flour
-  chocolate: 'socola',
-  cocoa: 'socola',
-  cacao: 'socola',
-  bread: 'banhmi',
-  baguette: 'banhmi',
-  sandwich: 'banhmi',
-  sourdough: 'banhmi',
-  focaccia: 'banhmi',
-  brioche: 'banhmi',
-  bagel: 'banhmi',
-  danish: 'banhmi',
-  pastry: 'banhngot',
-  cake: 'banhngot',
-  mousse: 'banhngot',
-  tiramisu: 'banhngot',
-  muffin: 'banhngot',
-  brownie: 'banhngot',
-  macaron: 'banhngot',
-  flan: 'banhngot',
-  pudding: 'banhngot',
-  cookie: 'banhquy',
-  biscuit: 'banhquy',
-  flour: 'bot',
-  cereal: 'ngucoc',
-  oats: 'yenmach',
-  popcorn: 'baprangbo',
-  // Meat / Poultry / Seafood
-  beef: 'thitbo',
-  lamb: 'cuu',
-  pork: 'thitheo',
-  bacon: 'thitheo',
-  ham: 'jambon',
-  jambon: 'jambon',
-  sausage: 'xucxich',
-  chicken: 'thitga',
-  duck: 'vit',
-  poultry: 'giacam',
-  salmon: 'cahoi',
-  fish: 'ca',
-  shrimp: 'tom',
-  prawn: 'tom',
-  seafood: 'haisan',
-  shellfish: 'nhuyenthe',
-  oyster: 'hau',
-  sashimi: 'sashimi',
-  sushi: 'sushi',
-  // Produce / Rice / Noodles / Dry / Condiments / Beverages
-  vegetable: 'raucu',
-  vegetables: 'raucu',
-  lettuce: 'xalach',
-  cucumber: 'dualeo',
-  tomato: 'cachua',
-  onion: 'hanhtay',
-  garlic: 'toi',
-  herb: 'rauthom',
-  herbs: 'rauthom',
-  salad: 'xalach',
-  fruit: 'traicay',
-  fruits: 'traicay',
-  pineapple: 'dua',
-  mango: 'xoai',
-  apple: 'tao',
-  orange: 'cam',
-  lemon: 'chanh',
-  strawberry: 'dautay',
-  potato: 'khoaitay',
-  rice: 'com',
-  sticky: 'xoi',
-  porridge: 'chao',
-  noodle: 'mi',
-  noodles: 'mi',
-  pasta: 'mi',
-  vermicelli: 'bun',
-  pho: 'pho',
-  tofu: 'dauhu',
-  juice: 'nuocep',
-  smoothie: 'sinhto',
-  syrup: 'siro',
-  jam: 'mut',
-  coffee: 'caphe',
-  espresso: 'caphe',
-  latte: 'caphe',
-  americano: 'caphe',
-  coldbrew: 'caphe',
-  tea: 'tra',
-  beer: 'bia',
-  wine: 'ruou',
-  soda: 'nuocngot',
-  sauce: 'sot',
-  broth: 'nuocdung',
-  stock: 'nuocdung',
-  soup: 'sup',
-  mayo: 'mayonnaise',
-  mayonnaise: 'mayonnaise',
-  mayonaise: 'mayonnaise',
-  mustard: 'mutat',
-  ketchup: 'tuongca',
-  vinegar: 'giam',
-  sugar: 'duong',
-  salt: 'muoi',
-  pepper: 'tieu',
-  oil: 'dauan',
-  spice: 'giavi',
-  spices: 'giavi',
-  honey: 'matong',
-  coconut: 'cotdua',
-  kimchi: 'kimchi',
-  squid: 'muc',
-  crab: 'cua',
-  octopus: 'bachuot',
-  croissant: 'banhsungbo',
-  custard: 'kemtrung',
-  // Storage conditions
-  frozen: 'khodong',
-  freeze: 'khodong',
-  freezer: 'khodong',
-  nofreeze: 'khongcapdong',
-  chilled: 'kholanh',
-  chill: 'kholanh',
-  fridge: 'kholanh',
-  cooler: 'kholanh',
-  ambient: 'nhietdophong',
-  room: 'nhietdophong',
-  today: 'trongngay',
-  defrost: 'radong',
-  thaw: 'radong',
-  thawed: 'radong',
-  reheat: 'hamnong',
-  cooling: 'lamnguoi',
-  vacuum: 'hutchankhong',
+export function toLowerNFC(input: string): string {
+  return input
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/\bbánh\s+mỳ\b/g, 'bánh mì')
+    .replace(/\bmỳ\b/g, 'mì');
+}
+
+export function stripAccents(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .toLowerCase();
+}
+
+export function hasVietnameseDiacritics(input: string): boolean {
+  return VN_ACCENTED_CHAR_RE.test(input.normalize('NFC'));
+}
+
+export function normalizeText(input: string): string {
+  return stripAccents(input)
+    .replace(/\bbanh\s*my\b/g, 'banh mi')
+    .replace(/\bmy\b/g, 'mi')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function tokenizeWords(input: string): string[] {
+  return toLowerNFC(input)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+// Bi-directional F&B synonym dictionary (preserved with accurate diacritics)
+const WORD_SYNONYMS: Record<string, string[]> = {
+  heo: ['lợn'],
+  lợn: ['heo'],
+  bò: ['thịt bò'],
+  bắp: ['ngô'],
+  ngô: ['bắp'],
+  thơm: ['dứa', 'khóm'],
+  dứa: ['thơm', 'khóm'],
+  khóm: ['dứa', 'thơm'],
+  mè: ['vừng'],
+  vừng: ['mè'],
+  lạc: ['đậu phộng'],
+  gà: ['gia cầm', 'chicken'],
+  vịt: ['gia cầm', 'duck'],
+  beef: ['bò', 'thịt bò'],
+  pork: ['heo', 'lợn', 'thịt heo'],
+  lamb: ['cừu'],
+  veal: ['bê'],
+  chicken: ['gà', 'gia cầm'],
+  duck: ['vịt', 'gia cầm'],
+  poultry: ['gia cầm'],
+  seafood: ['hải sản'],
+  fish: ['cá'],
+  shrimp: ['tôm'],
+  prawn: ['tôm'],
+  crab: ['cua'],
+  squid: ['mực'],
+  octopus: ['bạch tuộc'],
+  butter: ['bơ'],
+  milk: ['sữa'],
+  egg: ['trứng'],
+  eggs: ['trứng'],
+  bread: ['bánh mì'],
+  baguette: ['bánh mì'],
+  flour: ['bột'],
+  sugar: ['đường'],
+  coffee: ['cà phê'],
+  cafe: ['cà phê'],
+  tea: ['trà'],
+  cocoa: ['ca cao'],
+  chocolate: ['ca cao', 'sô cô la'],
+  sauce: ['sốt'],
+  mustard: ['mù tạt'],
+  ketchup: ['tương cà'],
+  chili: ['ớt'],
+  oats: ['yến mạch'],
+  granola: ['ngũ cốc'],
+  rice: ['cơm', 'gạo'],
+  vegetable: ['rau'],
+  vegetables: ['rau củ'],
+  fruit: ['quả', 'trái cây'],
+  fruits: ['trái cây'],
+  cheese: ['phô mai'],
+  cream: ['kem'],
+  bacon: ['thịt xông khói'],
+  sausage: ['xúc xích'],
+  ham: ['jambon'],
 };
 
-export function normalizeText(s: string): string {
-  let out = s
-    .replace(/(^|[^\p{L}])m[ỳýỷỹỵ](?=$|[^\p{L}])/gu, '$1mi')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036F]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase();
-  for (const [pattern, replacement] of COMPOUND_REPLACEMENTS) {
-    out = out.replace(pattern, replacement);
+const PHRASE_SYNONYMS: Array<[string, string[]]> = [
+  ['thịt bò', ['bò', 'thịt đỏ']],
+  ['thịt heo', ['heo', 'lợn', 'thịt đỏ']],
+  ['thịt lợn', ['heo', 'thịt heo', 'thịt đỏ']],
+  ['đậu phộng', ['lạc', 'hạt']],
+  ['xì dầu', ['nước tương']],
+  ['nước tương', ['xì dầu']],
+  ['phô mai', ['phomai', 'cheese', 'cheddar', 'mozzarella', 'ricotta', 'cream cheese']],
+  ['phomai', ['phô mai', 'cheese']],
+  ['sô cô la', ['ca cao', 'bột ca cao', 'chocolate']],
+  ['socola', ['ca cao', 'bột ca cao', 'chocolate']],
+  ['sữa chua', ['yaourt', 'yogurt']],
+  ['bắp cải', ['rau lá', 'cải']],
+  ['bông cải', ['súp lơ']],
+  ['súp lơ', ['bông cải']],
+  ['măng tây', ['rau củ cứng']],
+  ['dưa leo', ['dưa chuột', 'quả']],
+  ['dưa chuột', ['dưa leo', 'quả']],
+  ['nước cốt dừa', ['cốt dừa']],
+  ['cà phê', ['cafe', 'coffee']],
+  ['bánh mì', ['bánh nướng chín', 'bread', 'baguette']],
+  ['sữa tươi', ['sữa béo', 'kem tươi']],
+  ['whipping cream', ['kem tươi', 'sữa béo']],
+];
+
+// Curated accented culinary aliases scoped strictly to [Name / Group] per official SHE code
+const ACCENTED_ITEM_ALIASES: Record<string, string[]> = {
+  'SHE-01': ['thịt bò', 'bò', 'thịt bê', 'bê', 'thịt cừu', 'cừu', 'thịt heo', 'heo', 'thịt lợn', 'lợn', 'thịt đỏ', 'thịt tươi', 'sườn', 'bít tết', 'steak'],
+  'SHE-02': ['thịt bò xay', 'thịt heo xay', 'thịt lợn xay', 'thịt xay', 'bò xay', 'heo xay', 'lợn xay', 'thịt băm'],
+  'SHE-03': ['nước súp', 'nước dùng', 'nước hầm xương', 'súp xương', 'súp thịt'],
+  'SHE-04': ['thịt chín', 'thịt bò chín', 'thịt heo chín', 'thịt lợn chín', 'đồ ăn thừa'],
+  'SHE-05': ['thịt nhồi', 'gà cuộn nhồi thịt', 'đậu hũ nhồi'],
+  'SHE-06': ['thịt gà chín', 'gà chín', 'vịt chín', 'gia cầm chín', 'gà nướng', 'gà luộc'],
+  'SHE-07': ['thịt gà', 'gà nguyên con', 'vịt nguyên con', 'gà sống', 'vịt sống', 'gia cầm'],
+  'SHE-08': ['thịt gà', 'gà cắt khúc', 'vịt cắt khúc', 'ức gà', 'đùi gà', 'cánh gà'],
+  'SHE-09': ['gà xay', 'vịt xay', 'gia cầm xay'],
+  'SHE-10': ['lòng gà', 'mề gà', 'tim gà', 'nội tạng gia cầm'],
+  'SHE-11': ['cá hồi', 'cá ngừ', 'cá thu', 'cá chép', 'cá tuyết', 'cá diêu hồng', 'cá tươi', 'cá phi lê', 'cá sống', 'salmon', 'tuna'],
+  'SHE-12': ['tôm sú', 'tôm thẻ', 'tôm hùm', 'tôm tươi', 'cua', 'ghẹ', 'giáp xác'],
+  'SHE-13': ['mực', 'bạch tuộc', 'nghêu', 'sò', 'ngao', 'hàu', 'vẹm', 'nhuyễn thể'],
+  'SHE-14': ['hải sản chín', 'tôm luộc', 'tôm hấp', 'cá nấu chín', 'hải sản hấp'],
+  'SHE-15': ['cá hồi xông khói', 'cá xông khói', 'thịt xông khói', 'ba rọi xông khói', 'bacon'],
+  'SHE-16': ['xúc xích', 'lạp xưởng', 'sausage'],
+  'SHE-17': ['giò lụa', 'chả lụa', 'jambon', 'thịt nguội', 'thịt xông khói cắt lát'],
+  'SHE-18': ['xúc xích chín', 'thịt nguội nấu chín'],
+  'SHE-19': ['phô mai cứng', 'phô mai', 'cheddar', 'mozzarella', 'parmesan', 'gouda'],
+  'SHE-20': ['phô mai mềm', 'phô mai tươi', 'phô mai', 'ricotta', 'cream cheese', 'mascarpone'],
+  'SHE-21': ['sữa tươi', 'sữa béo', 'kem tươi', 'whipping cream', 'heavy cream', 'sữa chua'],
+  'SHE-22': ['bơ', 'bơ lạt', 'bơ mặn', 'bơ thực vật', 'bơ động vật', 'butter'],
+  'SHE-23': ['sữa đặc', 'sữa đặc có đường'],
+  'SHE-24': ['trứng gà', 'trứng vịt', 'trứng cút', 'trứng sống', 'trứng tươi', 'trứng nguyên vỏ'],
+  'SHE-25': ['trứng luộc', 'trứng chiên', 'trứng hấp', 'trứng chín'],
+  'SHE-26': ['rau lá', 'rau cải', 'xà lách', 'cải thìa', 'cải ngọt', 'rau muống', 'rau thơm'],
+  'SHE-27': ['cam', 'quýt', 'bưởi', 'chanh', 'quả có múi'],
+  'SHE-28': ['dứa', 'thơm', 'khóm', 'dừa', 'xoài', 'táo', 'chuối', 'nho', 'dâu tây', 'dưa hấu', 'trái cây'],
+  'SHE-29': ['cà rốt', 'súp lơ', 'bông cải', 'đậu que', 'bí đỏ', 'su su', 'củ cải', 'rau củ cứng'],
+  'SHE-30': ['khoai tây', 'khoai lang', 'hành tây', 'tỏi', 'gừng', 'sả', 'hành tím'],
+  'SHE-31': ['rau củ sơ chế', 'rau gọt vỏ'],
+  'SHE-32': ['rau cắt sẵn', 'trái cây cắt sẵn', 'salad trộn'],
+  'SHE-33': ['nước tương', 'xì dầu', 'nước mắm'],
+  'SHE-34': ['tương ớt'],
+  'SHE-35': ['tương cà', 'tương cà chua', 'ketchup'],
+  'SHE-36': ['mù tạt', 'mustard'],
+  'SHE-37': ['sốt mayonnaise', 'mayonnaise', 'sốt trứng', 'sốt sữa', 'sốt kem', 'hollandaise'],
+  'SHE-38': ['sốt tự nấu', 'nước chấm', 'sốt cà chua tự nấu'],
+  'SHE-39': ['cốt hoa quả', 'nước cốt trái cây'],
+  'SHE-40': ['sirô', 'syrup'],
+  'SHE-41': ['nước đường', 'nước đường cô đặc'],
+  'SHE-42': ['nước ép tươi', 'nước ép tự làm'],
+  'SHE-43': ['nước ép đóng hộp', 'nước trái cây đóng chai'],
+  'SHE-44': ['sữa hạt', 'sữa đậu nành', 'sữa hạnh nhân', 'sữa óc chó', 'sữa thực vật'],
+  'SHE-45': ['nước ngọt', 'nước khoáng có gas', 'bia', 'soda', 'cola'],
+  'SHE-46': ['trà pha sẵn', 'cà phê pha sẵn', 'cold brew'],
+  'SHE-47': ['bột mì trộn sẵn', 'bột bánh', 'bột trộn sẵn'],
+  'SHE-48': ['bánh bao'],
+  'SHE-49': ['bánh mì', 'bánh mỳ', 'bánh nướng chín', 'baguette', 'sandwich'],
+  'SHE-50': ['bánh kem', 'bánh ngọt có kem', 'tiramisu', 'mousse', 'bánh flan'],
+  'SHE-51': ['bánh chưa nướng', 'bột đông lạnh', 'croissant đông lạnh'],
+  'SHE-52': ['mì tươi', 'mì chín', 'bún', 'miến', 'mì ý', 'pasta', 'spaghetti', 'tinh bột chín'],
+  'SHE-53': ['cơm', 'cơm trắng', 'xôi', 'khoai chín'],
+  'SHE-54': ['bắp rang bơ', 'ngô rang bơ', 'popcorn'],
+  'SHE-55': ['bột trà', 'lá trà khô', 'trà khô'],
+  'SHE-56': ['trà túi', 'trà túi lọc'],
+  'SHE-57': ['bột ca cao', 'ca cao', 'sô cô la', 'socola'],
+  'SHE-58': ['bột cà phê', 'cà phê rang xay', 'cà phê hạt'],
+  'SHE-59': ['bột matcha', 'matcha', 'bột sữa', 'bột kem béo'],
+  'SHE-60': ['ngô hạt khô', 'bắp hạt khô'],
+  'SHE-61': ['gia vị khô', 'thảo mộc khô', 'tiêu', 'quế', 'hồi', 'ớt khô'],
+  'SHE-62': ['bột mì', 'bột gạo', 'tinh bột', 'bột bắp', 'bột năng'],
+  'SHE-63': ['ngũ cốc', 'yến mạch', 'granola'],
+  'SHE-64': ['gạo', 'mì khô', 'bún khô', 'miến khô', 'nui khô', 'mì gói'],
+  'SHE-65': ['hạnh nhân', 'óc chó', 'hạt điều', 'đậu phộng', 'lạc', 'hạt khô'],
+  'SHE-66': ['đồ hộp', 'đồ đóng lon', 'nước cốt dừa đóng hộp', 'cá hộp', 'thịt hộp', 'đậu hộp'],
+};
+
+type StorageConstraint = 'room' | 'cool' | 'freeze' | 'noFreeze' | 'today';
+
+const STORAGE_PHRASE_MAP: Array<[RegExp, StorageConstraint]> = [
+  [/\b(?:không|khong)\s*(?:được\s*|duoc\s*)?(?:cấp\s*đông|cap\s*dong)\b/i, 'noFreeze'],
+  [/\b(?:tủ\s*mát|tu\s*mat|kho\s*mát|kho\s*mat|kho\s*lạnh|kho\s*lanh|tủ\s*lạnh|tu\s*lanh|chiller|fridge)\b/i, 'cool'],
+  [/\b(?:tủ\s*đông|tu\s*dong|kho\s*đông|kho\s*dong|cấp\s*đông|cap\s*dong|freezer|frozen)\b/i, 'freeze'],
+  [/\b(?:nhiệt\s*độ\s*phòng|nhiet\s*do\s*phong|kho\s*khô|kho\s*kho|ambient|room)\b/i, 'room'],
+  [/\b(?:trong\s*ngày|trong\s*ngay|theo\s*giờ|theo\s*gio)\b/i, 'today'],
+];
+
+const SINGLE_STORAGE_WORD: Record<string, StorageConstraint> = {
+  mát: 'cool',
+  mat: 'cool',
+  lạnh: 'cool',
+  lanh: 'cool',
+  chiller: 'cool',
+  đông: 'freeze',
+  dong: 'freeze',
+  freezer: 'freeze',
+  phòng: 'room',
+  phong: 'room',
+  ambient: 'room',
+};
+
+function matchesSingleWord(queryWord: string, targetWords: string[]): boolean {
+  const accented = hasVietnameseDiacritics(queryWord);
+  if (accented) {
+    const qNfc = toLowerNFC(queryWord);
+    return targetWords.some((tw) => toLowerNFC(tw) === qNfc);
   }
-  return out;
+  const qAscii = stripAccents(queryWord);
+  return targetWords.some((tw) => stripAccents(tw) === qAscii);
 }
 
-const SYNONYM_KEYS = Object.keys(SEARCH_SYNONYMS);
+function phraseRegexForQuery(phrase: string, strictAccents: boolean): RegExp {
+  const words = tokenizeWords(phrase);
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = escaped.join('[^\\p{L}\\p{N}]+');
+  try {
+    return new RegExp(`(?<!\\p{L})${pattern}(?!\\p{L})`, strictAccents ? 'iu' : 'iu');
+  } catch {
+    return new RegExp(`(?:^|\\s)${pattern}(?=$|\\s)`, 'i');
+  }
+}
 
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  const m = a.length;
-  const n = b.length;
-  if (!m) return n;
-  if (!n) return m;
-  let prev = Array.from({ length: n + 1 }, (_, i) => i);
-  for (let i = 1; i <= m; i++) {
-    const cur = [i];
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+function containsWholePhrase(
+  targetText: string,
+  queryPhrase: string,
+  strictAccents: boolean
+): boolean {
+  if (!queryPhrase.trim() || !targetText.trim()) return false;
+  const hay = strictAccents ? toLowerNFC(targetText) : stripAccents(targetText);
+  const needle = strictAccents ? toLowerNFC(queryPhrase) : stripAccents(queryPhrase);
+  const rx = phraseRegexForQuery(needle, strictAccents);
+  return rx.test(hay);
+}
+
+function startsWithWholePhrase(
+  targetText: string,
+  queryPhrase: string,
+  strictAccents: boolean
+): boolean {
+  const targetWords = tokenizeWords(targetText);
+  const queryWords = tokenizeWords(queryPhrase);
+  if (queryWords.length === 0 || targetWords.length < queryWords.length) return false;
+  for (let i = 0; i < queryWords.length; i++) {
+    const qw = queryWords[i];
+    const tw = targetWords[i];
+    if (strictAccents ? toLowerNFC(tw) !== toLowerNFC(qw) : stripAccents(tw) !== stripAccents(qw)) {
+      return false;
     }
-    prev = cur;
   }
-  return prev[n];
+  return true;
 }
 
-function resolveSynonym(word: string): string {
-  if (SEARCH_SYNONYMS[word]) return SEARCH_SYNONYMS[word];
-  if (word.length >= 5) {
-    const maxDist = word.length >= 7 ? 2 : 1;
-    for (const key of SYNONYM_KEYS) {
-      if (
-        key.length >= 5 &&
-        key[0] === word[0] &&
-        Math.abs(key.length - word.length) <= maxDist &&
-        levenshtein(word, key) <= maxDist
-      ) {
-        return SEARCH_SYNONYMS[key];
+function satisfiesStorageConstraint(item: FoodItem, c: StorageConstraint): boolean {
+  if (c === 'room') return hasCellValue(item.room);
+  if (c === 'cool') return hasCellValue(item.cool);
+  if (c === 'freeze') return hasCellValue(item.freeze);
+  if (c === 'noFreeze') return isNoFreezeCell(item.freeze);
+  if (c === 'today') return hasUseToday(item);
+  return false;
+}
+
+function buildTokenVariants(token: string, strictAccents: boolean): string[] {
+  const variants = new Set<string>([token]);
+  const nfc = toLowerNFC(token);
+  const direct = WORD_SYNONYMS[nfc];
+  if (direct) {
+    for (const s of direct) variants.add(s);
+  }
+  if (!strictAccents) {
+    const ascii = stripAccents(token);
+    for (const [k, vals] of Object.entries(WORD_SYNONYMS)) {
+      if (stripAccents(k) === ascii) {
+        for (const s of vals) variants.add(s);
       }
     }
   }
-  return word;
-}
-
-function tokenizeQuery(normalized: string): string[] {
-  return normalized
-    .split(/[\s\-_\/.,;():°≤≥]+/)
-    .filter(Boolean)
-    .map(resolveSynonym);
-}
-
-function tokenizeTarget(normalized: string): string[] {
-  const raw = normalized
-    .split(/[\s\-_\/.,;():°≤≥]+/)
-    .filter(Boolean);
-  const expanded: string[] = [];
-  for (const w of raw) {
-    expanded.push(w);
-    const syn = SEARCH_SYNONYMS[w];
-    if (syn && syn !== w) expanded.push(syn);
-  }
-  return expanded;
-}
-
-function scoreTokenAgainst(qt: string, tokens: string[]): number {
-  let best = 0;
-  for (const tk of tokens) {
-    if (tk === qt) best = Math.max(best, 100);
-    else if (tk.indexOf(qt) === 0 && qt.length >= 3) best = Math.max(best, 88);
-    else if (tk.includes(qt) && qt.length >= 3) best = Math.max(best, 72);
-    else if (
-      qt.length >= 4 &&
-      tk.length >= 4 &&
-      tk[0] === qt[0] &&
-      levenshtein(qt, tk) <= (qt.length >= 7 ? 2 : 1)
-    ) {
-      best = Math.max(best, 54);
-    }
-  }
-  return best;
-}
-
-function hasUnicodeWord(raw: string, wordWithAccent: string): boolean {
-  try {
-    return new RegExp(`(^|[^\\p{L}])${wordWithAccent}(?=$|[^\\p{L}])`, 'iu').test(raw);
-  } catch {
-    return raw.toLowerCase().includes(wordWithAccent.toLowerCase());
-  }
+  return Array.from(variants);
 }
 
 export interface SmartSearchOptions {
@@ -331,227 +318,357 @@ export function runSmartSearch({
   lang,
   aiMatchedCodes = [],
 }: SmartSearchOptions): FoodItem[] {
-  const q = query.trim();
-  if (!q) return items;
+  const rawQuery = query.trim();
+  if (!rawQuery) return items;
 
-  const qNorm = normalizeText(q);
-  const queryTokens = tokenizeQuery(qNorm);
-  const compactQ = q.toUpperCase().replace(/\s+/g, '');
+  const compactCodeQ = rawQuery.toUpperCase().replace(/\s+/g, '');
+  const queryStrictAccents = hasVietnameseDiacritics(rawQuery);
 
-  const hasButterAccent = hasUnicodeWord(q, 'bơ');
-  const hasBeefAccent = hasUnicodeWord(q, 'bò');
-  const hasPineappleAccent = hasUnicodeWord(q, 'dứa');
-  const hasCoconutAccent = hasUnicodeWord(q, 'dừa');
+  // Extract explicit storage conditions & strip matched multi-word storage phrases from food tokens
+  const storageConstraints: StorageConstraint[] = [];
+  let residualQuery = toLowerNFC(rawQuery);
+  for (const [rx, constraint] of STORAGE_PHRASE_MAP) {
+    if (rx.test(residualQuery)) {
+      if (!storageConstraints.includes(constraint)) {
+        storageConstraints.push(constraint);
+      }
+      residualQuery = residualQuery.replace(rx, ' ').trim();
+    }
+  }
 
-  // AI rank map (earlier in array = higher relevance)
+  // Extract phrase synonyms before word tokenization (e.g. "thịt lợn" -> "thịt heo", "đậu phộng" -> "lạc")
+  const rawTokens = tokenizeWords(residualQuery);
+  const expandedPhraseAlts: string[] = [residualQuery];
+  for (const [phrase, alts] of PHRASE_SYNONYMS) {
+    if (
+      residualQuery &&
+      containsWholePhrase(residualQuery, phrase, queryStrictAccents)
+    ) {
+      for (const alt of alts) {
+        expandedPhraseAlts.push(
+          toLowerNFC(residualQuery).replace(phrase, alt).trim()
+        );
+      }
+    }
+  }
+
+  // Separate optional single-word storage tokens if combined with food words (e.g., "cá hồi đông" or just "mát")
+  const foodTokens: string[] = [];
+  const ambiguousStorageTokens: Array<{ word: string; constraint: StorageConstraint }> = [];
+  for (const tk of rawTokens) {
+    const key = hasVietnameseDiacritics(tk) ? toLowerNFC(tk) : stripAccents(tk);
+    const sc = SINGLE_STORAGE_WORD[key];
+    if (sc && rawTokens.length > 1) {
+      ambiguousStorageTokens.push({ word: tk, constraint: sc });
+    } else if (sc && rawTokens.length === 1 && storageConstraints.length === 0) {
+      ambiguousStorageTokens.push({ word: tk, constraint: sc });
+    } else {
+      foodTokens.push(tk);
+    }
+  }
+
+  // AI rank map (only used if explicitly provided)
   const aiRankMap = new Map<string, number>();
-  aiMatchedCodes.forEach((code, idx) => {
-    aiRankMap.set(code.toUpperCase(), idx);
-  });
+  aiMatchedCodes.forEach((c, idx) => aiRankMap.set(c.toUpperCase(), idx));
 
-  // Detect explicit SHE storage intents
-  const wantsUseToday =
-    qNorm.includes('trongngay') || qNorm.includes('today') || qNorm.includes('8gio') || qNorm.includes('4gio');
-  const wantsNoFreeze =
-    qNorm.includes('khongcapdong') || qNorm.includes('khongduoccapdong');
-  const wantsFreeze = !wantsNoFreeze && qNorm.includes('khodong');
-  const wantsCool = qNorm.includes('kholanh');
-  const wantsRoom = qNorm.includes('nhietdophong');
-
-  const scored: Array<{ item: FoodItem; score: number; len: number }> = [];
-  const headFallbackScored: Array<{ item: FoodItem; score: number; len: number }> = [];
+  const scored: Array<{ item: FoodItem; score: number; nameLen: number }> = [];
 
   for (const item of items) {
     const code = getItemCode(item);
-    const displayName = translateItemName(item, lang);
-    const aiRank = aiRankMap.get(code.toUpperCase());
-
-    const rawTextPool = `${item.name} ${item.g} ${(item.keywords || []).join(' ')}`;
-    if (hasButterAccent && !hasBeefAccent && hasUnicodeWord(rawTextPool, 'bò') && !hasUnicodeWord(rawTextPool, 'bơ')) {
-      continue;
-    }
-    if (hasBeefAccent && !hasButterAccent && hasUnicodeWord(rawTextPool, 'bơ') && !hasUnicodeWord(rawTextPool, 'bò')) {
-      continue;
-    }
-    if (hasPineappleAccent && !hasCoconutAccent && hasUnicodeWord(rawTextPool, 'dừa') && !hasUnicodeWord(rawTextPool, 'dứa')) {
-      continue;
-    }
-    if (hasCoconutAccent && !hasPineappleAccent && hasUnicodeWord(rawTextPool, 'dứa') && !hasUnicodeWord(rawTextPool, 'dừa')) {
-      continue;
-    }
-
-    // 1. Direct SHE Item Code Match (e.g. "SHE-23", "SHE 23", "23")
     const normalizedCode = code.toUpperCase();
     const compactSheNoDash = normalizedCode.replace('-', '');
+
+    // 1. Direct SHE Code Match (e.g. "SHE-01", "SHE 01", "11")
     const numericMatch =
-      /^\d{1,2}$/.test(compactQ) && String(item.n) === String(Number(compactQ));
+      /^\d{1,2}$/.test(compactCodeQ) &&
+      String(item.n) === String(Number(compactCodeQ));
     if (
-      normalizedCode === compactQ ||
-      compactSheNoDash === compactQ.replace('-', '') ||
+      normalizedCode === compactCodeQ ||
+      compactSheNoDash === compactCodeQ.replace('-', '') ||
       numericMatch
     ) {
       scored.push({
         item,
-        score:
-          normalizedCode === compactQ ||
-          compactSheNoDash === compactQ.replace('-', '')
-            ? 300
-            : 185,
-        len: displayName.length,
+        score: numericMatch ? 950 : 1000,
+        nameLen: item.name.length,
       });
       continue;
     }
 
-    // 2. Bilingual Name + English Name + SHE Keywords + Custom Columns token scoring
-    const queryHasKhong = queryTokens.includes('khong') || qNorm.includes('khong');
-    const cleanViName = queryHasKhong
-      ? item.name
-      : item.name.replace(/\(\s*không[^)]*\)/gi, ' ');
-    const enTranslatedName = translateItemName(item, 'EN');
-    const kwStr = (item.keywords || []).join(' ');
-    const customStr = item.customFields
-      ? Object.values(item.customFields).join(' ')
-      : '';
-    const namePool = `${displayName} ${cleanViName} ${enTranslatedName} ${item.enName || ''} ${kwStr} ${customStr}`;
-    const nameNorm = normalizeText(namePool);
-    const nameTokens = tokenizeTarget(nameNorm);
-    const perTokenScores = queryTokens.map((qt) =>
-      scoreTokenAgainst(qt, nameTokens)
-    );
-    const allNameTokensPass =
-      queryTokens.length > 0 && perTokenScores.every((s) => s >= 54);
-
-    if (allNameTokensPass) {
-      const avg =
-        perTokenScores.reduce((acc, v) => acc + v, 0) / perTokenScores.length;
-      let bonus = 0;
-      const coreNameNorm = normalizeText(`${displayName} ${cleanViName} ${enTranslatedName}`);
-      if (coreNameNorm.includes(qNorm)) bonus += 42;
-      else if (nameNorm.includes(qNorm)) bonus += 28;
-      if (nameTokens[0] === queryTokens[0]) bonus += 14;
-      if (aiRank !== undefined) bonus += Math.max(8, 30 - aiRank * 2);
-      bonus += Math.max(0, 10 - Math.abs(displayName.length - q.length) / 8);
-      scored.push({ item, score: avg + bonus, len: displayName.length });
+    // Check mandatory explicit multi-word storage constraints (e.g., "tủ mát", "tủ đông", "không cấp đông")
+    if (
+      storageConstraints.length > 0 &&
+      !storageConstraints.every((c) => satisfiesStorageConstraint(item, c))
+    ) {
       continue;
     }
 
-    // 2b. Partial Multi-Token High-Overlap Fallback (>= 60% of tokens with min 2 hits)
-    if (queryTokens.length >= 2) {
-      const strongHits = perTokenScores.filter((s) => s >= 70);
-      const hitRatio = strongHits.length / queryTokens.length;
-      if (strongHits.length >= 2 && hitRatio >= 0.6) {
-        const avgHit =
-          strongHits.reduce((acc, v) => acc + v, 0) / strongHits.length;
-        const aiBonus = aiRank !== undefined ? Math.max(8, 28 - aiRank * 2) : 0;
-        scored.push({
-          item,
-          score: avgHit * 0.72 * hitRatio + aiBonus,
-          len: displayName.length,
-        });
-        continue;
+    // Build STRICTLY scoped [Tên thực phẩm] & [Nhóm thực phẩm] fields (NO note/description!)
+    const displayName = translateItemName(item, lang);
+    const enName = item.enName || translateItemName(item, 'EN');
+    const nameFieldList = [item.name, displayName, enName].filter(Boolean);
+    const primaryName = displayName || item.name;
+
+    const localizedGroup = translateGroup(item.g, lang);
+    const enGroup = translateGroup(item.g, 'EN');
+    const groupFieldList = [item.g, localizedGroup, enGroup].filter(Boolean);
+
+    const curatedAliases = ACCENTED_ITEM_ALIASES[normalizedCode] || [];
+
+    const nameWords = nameFieldList.flatMap(tokenizeWords);
+    const groupWords = groupFieldList.flatMap(tokenizeWords);
+    const aliasWords = curatedAliases.flatMap(tokenizeWords);
+
+    // Note: Only consult raw item.keywords when user query has NO diacritics!
+    const unaccentedKeywordsWords =
+      !queryStrictAccents && Array.isArray(item.keywords)
+        ? item.keywords.flatMap(tokenizeWords)
+        : [];
+
+    const allNameAndAliasWords = [
+      ...nameWords,
+      ...aliasWords,
+      ...unaccentedKeywordsWords,
+    ];
+    const allAllowedWords = [...allNameAndAliasWords, ...groupWords];
+
+    // Verify ambiguous single storage words (e.g. "đông" in "cá hồi đông" or "mát"):
+    // Satisfied if EITHER storage column matches OR the word appears in Name/Group!
+    let ambiguousStoragePass = true;
+    for (const amb of ambiguousStorageTokens) {
+      const inText = matchesSingleWord(amb.word, allAllowedWords);
+      const inStorage = satisfiesStorageConstraint(item, amb.constraint);
+      if (!inText && !inStorage) {
+        ambiguousStoragePass = false;
+        break;
       }
     }
+    if (!ambiguousStoragePass) continue;
 
-    // 3. Group Phrase Fallback (localized + VI + EN group)
-    const joinedQ = queryTokens.join(' ');
-    const groupNorm = normalizeText(
-      `${translateGroup(item.g, lang)} ${translateGroup(item.g, 'EN')} ${item.g}`
-    );
-    const groupWords = tokenizeTarget(groupNorm);
-    const groupMatchesPhrase =
-      joinedQ.length >= 2 &&
-      (joinedQ.length <= 4
-        ? groupWords.includes(joinedQ)
-        : new RegExp(
-            `(?:^|[\\s/(),.-])${joinedQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s/(),.-])`
-          ).test(groupNorm));
-    if (groupMatchesPhrase) {
-      const aiBonus = aiRank !== undefined ? Math.max(6, 24 - aiRank) : 0;
-      scored.push({ item, score: 52 + aiBonus, len: displayName.length });
-      continue;
-    }
-
-    // 4. Storage / Note / NoFreeze Intent Matching
-    let hygieneScore = 0;
-    if (wantsUseToday && hasUseToday(item)) hygieneScore = Math.max(hygieneScore, 52);
-    if (wantsNoFreeze && isNoFreezeCell(item.freeze)) hygieneScore = Math.max(hygieneScore, 52);
-    if (wantsFreeze && hasCellValue(item.freeze)) hygieneScore = Math.max(hygieneScore, 46);
-    if (wantsCool && hasCellValue(item.cool)) hygieneScore = Math.max(hygieneScore, 46);
-    if (wantsRoom && hasCellValue(item.room)) hygieneScore = Math.max(hygieneScore, 46);
-
-    if (hygieneScore === 0 && qNorm.length >= 3) {
-      const noteText = isEmptyCell(item.note)
-        ? ''
-        : `${item.note} ${translateItemNote(item, lang)}`;
-      const extraMeta = [
-        item.standardTemp || '',
-        item.packagingSpec || '',
-        item.shelfLifeUnopened || '',
-        item.shelfLifeOpened || '',
-        customStr,
-      ].join(' ');
-      const storageAndNotePool = normalizeText(
-        `${item.room} ${item.cool} ${item.freeze} ${noteText} ${item.flag} ${extraMeta}`
-      );
-      if (storageAndNotePool.includes(qNorm)) {
-        hygieneScore = 46;
-      } else if (queryTokens.length >= 2) {
-        const metaTokens = tokenizeTarget(storageAndNotePool);
-        const combinedTokens = [...nameTokens, ...metaTokens];
-        const crossScores = queryTokens.map((qt) =>
-          scoreTokenAgainst(qt, combinedTokens)
-        );
-        if (crossScores.every((s) => s >= 70)) {
-          hygieneScore = 45;
-        } else {
-          const hitCount = crossScores.filter((s) => s >= 70).length;
-          if (hitCount >= 2 && hitCount / queryTokens.length >= 0.65) {
-            hygieneScore = 41;
-          }
-        }
-      }
-    }
-
-    if (hygieneScore > 0) {
-      const aiBonus = aiRank !== undefined ? Math.max(10, 32 - aiRank * 2) : 0;
-      scored.push({ item, score: hygieneScore + aiBonus, len: displayName.length });
-      continue;
-    }
-
-    // 5. Pure AI Semantic Match
-    if (aiRank !== undefined) {
+    // Pure storage query (e.g., "tủ mát", "chiller", "không cấp đông", "tủ đông")
+    if (foodTokens.length === 0) {
+      const storageBonus = nameWords.some((w) =>
+        ambiguousStorageTokens.some((a) => matchesSingleWord(a.word, [w]))
+      )
+        ? 450
+        : 400;
       scored.push({
         item,
-        score: Math.max(35, 85 - aiRank * 2),
-        len: displayName.length,
+        score: storageBonus,
+        nameLen: primaryName.length,
       });
       continue;
     }
 
-    // 6. Primary Head-Noun Variant Fallback (only used if strict tiers yield 0 results, e.g. "bơ lạt", "trứng cút")
-    if (queryTokens.length >= 2) {
-      const genericSkip = new Set(['cac', 'loai', 'do', 'thuc', 'pham', 'che', 'bien', 'khong', 'co', 'da', 'chua', 'moi']);
-      const headTokens = tokenizeTarget(normalizeText(cleanViName)).filter((t) => !genericSkip.has(t));
-      const matchedHeadCount = queryTokens.filter(
-        (qt) => qt.length >= 2 && !genericSkip.has(qt) && (headTokens[0] === qt || (item.keywords || []).some((kw) => normalizeText(kw) === qt))
-      ).length;
-      if (matchedHeadCount >= 1) {
-        headFallbackScored.push({
-          item,
-          score: 36 + matchedHeadCount * 4,
-          len: displayName.length,
+    // Require ALL food tokens to match (tokenMatch: 'all') in Name or Group (with bi-directional synonyms)
+    const tokenMatchIn = (token: string, poolWords: string[]): boolean => {
+      const tokenStrict = hasVietnameseDiacritics(token);
+      const variants = buildTokenVariants(token, tokenStrict);
+      for (const variant of variants) {
+        const vWords = tokenizeWords(variant);
+        if (vWords.length === 1) {
+          if (matchesSingleWord(vWords[0], poolWords)) return true;
+        } else if (vWords.length > 1) {
+          if (vWords.every((vw) => matchesSingleWord(vw, poolWords))) return true;
+        }
+      }
+      return false;
+    };
+
+    const allInAllowed = foodTokens.every((tk) =>
+      tokenMatchIn(tk, allAllowedWords)
+    );
+    if (!allInAllowed) {
+      // Check whole phrase synonym match against Name / Aliases / Group
+      const matchesAnyPhraseAlt = expandedPhraseAlts.some(
+        (alt) =>
+          alt &&
+          tokenizeWords(alt).every((tk) => tokenMatchIn(tk, allAllowedWords))
+      );
+      if (!matchesAnyPhraseAlt) continue;
+    }
+
+    // Scoring & Ranking: Exact Name -> Starts With Name -> Contains in Name -> All Tokens in Name -> Group
+    const phraseToCheck = foodTokens.join(' ');
+    let score = 420;
+
+    const exactNameMatch = nameFieldList.some((nf) => {
+      const a = queryStrictAccents ? toLowerNFC(nf) : stripAccents(nf);
+      const b = queryStrictAccents
+        ? toLowerNFC(phraseToCheck)
+        : stripAccents(phraseToCheck);
+      return a.trim() === b.trim();
+    });
+
+    const startsWithName = nameFieldList.some((nf) =>
+      startsWithWholePhrase(nf, phraseToCheck, queryStrictAccents)
+    );
+    const containsPhraseInName = nameFieldList.some((nf) =>
+      containsWholePhrase(nf, phraseToCheck, queryStrictAccents)
+    );
+    const allTokensInPrimaryName = foodTokens.every((tk) =>
+      tokenMatchIn(tk, nameWords)
+    );
+    const matchesAliasPhrase = curatedAliases.some(
+      (al) =>
+        containsWholePhrase(al, phraseToCheck, queryStrictAccents) ||
+        foodTokens.every((tk) => tokenMatchIn(tk, tokenizeWords(al)))
+    );
+    const startsWithGroup = groupFieldList.some((gf) =>
+      startsWithWholePhrase(gf, phraseToCheck, queryStrictAccents)
+    );
+    const containsPhraseInGroup = groupFieldList.some((gf) =>
+      containsWholePhrase(gf, phraseToCheck, queryStrictAccents)
+    );
+    const allTokensInGroup = foodTokens.every((tk) =>
+      tokenMatchIn(tk, groupWords)
+    );
+
+    if (exactNameMatch) {
+      score = 920;
+    } else if (startsWithName) {
+      score = 840;
+    } else if (containsPhraseInName) {
+      score = 760;
+    } else if (allTokensInPrimaryName) {
+      score = 680;
+    } else if (matchesAliasPhrase) {
+      score = 620;
+    } else if (startsWithGroup) {
+      score = 540;
+    } else if (containsPhraseInGroup) {
+      score = 510;
+    } else if (allTokensInGroup) {
+      score = 480;
+    } else {
+      score = 440;
+    }
+
+    const aiRank = aiRankMap.get(normalizedCode);
+    if (aiRank !== undefined) {
+      score += Math.max(2, 20 - aiRank);
+    }
+
+    scored.push({
+      item,
+      score,
+      nameLen: primaryName.length,
+    });
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.nameLen !== b.nameLen) return a.nameLen - b.nameLen;
+    return (a.item.order ?? a.item.n) - (b.item.order ?? b.item.n);
+  });
+
+  return scored.map((s) => s.item);
+}
+
+export interface HighlightSegment {
+  text: string;
+  matched: boolean;
+}
+
+/**
+ * Splits `text` into segments highlighting matched whole words from `query`
+ * while honoring Smart Diacritics (accented queries strictly match accents;
+ * unaccented queries match accent-insensitively at whole-word boundaries).
+ */
+export function getHighlightSegments(
+  text: string,
+  query: string
+): HighlightSegment[] {
+  const q = query.trim();
+  if (!q || !text) return [{ text, matched: false }];
+
+  // Collect candidate word matchers (including bi-directional word synonyms)
+  const rawTokens = tokenizeWords(q).filter((tk) => tk.length >= 1);
+  if (rawTokens.length === 0) return [{ text, matched: false }];
+
+  const tokenMatchers: Array<{ token: string; strict: boolean }> = [];
+  for (const tk of rawTokens) {
+    const strict = hasVietnameseDiacritics(tk);
+    tokenMatchers.push({ token: tk, strict });
+    for (const v of buildTokenVariants(tk, strict)) {
+      for (const vw of tokenizeWords(v)) {
+        tokenMatchers.push({
+          token: vw,
+          strict: strict && hasVietnameseDiacritics(vw),
         });
       }
     }
   }
 
-  const finalResults = scored.length > 0 ? scored : headFallbackScored;
+  // Walk `text` by word & non-word chunks so Unicode word boundaries are 100% preserved
+  const parts = text.split(/([^\p{L}\p{N}]+)/u).filter(Boolean);
+  const segments: HighlightSegment[] = [];
 
-  finalResults.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (a.len !== b.len) return a.len - b.len;
-    return (a.item.order ?? a.item.n) - (b.item.order ?? b.item.n);
-  });
+  for (const part of parts) {
+    const isWord = /\p{L}|\p{N}/u.test(part);
+    if (!isWord) {
+      const prev = segments[segments.length - 1];
+      if (prev && !prev.matched) prev.text += part;
+      else segments.push({ text: part, matched: false });
+      continue;
+    }
 
-  return finalResults.map((entry) => entry.item);
+    const partNfc = toLowerNFC(part);
+    const partAscii = stripAccents(part);
+    const isMatch = tokenMatchers.some(({ token, strict }) =>
+      strict ? partNfc === toLowerNFC(token) : partAscii === stripAccents(token)
+    );
+
+    const prev = segments[segments.length - 1];
+    if (prev && prev.matched === isMatch) {
+      prev.text += part;
+    } else {
+      segments.push({ text: part, matched: isMatch });
+    }
+  }
+
+  return segments;
+}
+
+const COMPLEX_TIER2_PATTERNS: RegExp[] = [
+  /[?？]/,
+  /\b(?:mấy|may|bao nhiêu|bao nhieu|bao lâu|bao lau|khi nào|khi nao|thế nào|the nao|như thế nào|nhu the nao|ra sao|tại sao|tai sao|vì sao|vi sao|làm sao|lam sao)\b/iu,
+  /\b(?:so sánh|so sanh|khác nhau|khac nhau|khác gì|khac gi|phân biệt|phan biet|tốt hơn|tot hon|nên|nen)\b/iu,
+  /\b(?:rã đông|ra dong|hâm nóng|ham nong|làm nguội|lam nguoi|cộng dồn|cong don|ghi nhãn|ghi nhan|xếp tủ|xep tu|sống chín|song chin)\b/iu,
+  /\b(?:quy trình|quy trinh|quy định|quy dinh|nguyên tắc|nguyen tac|điều|dieu|mục|muc|hướng dẫn|huong dan)\b/iu,
+  /\b(?:mở nắp|mo nap|mở bao|mo bao|mở bịch|mo bich|mở gói|mo goi|mở hộp|mo hop|chưa mở|chua mo|nguyên bao|nguyen bao|lấy ra|lay ra|để ngoài|de ngoai|bảo quản|bao quan|để được|de duoc|hạn|han|nhiệt độ|nhiet do)\b/iu,
+  /\b(?:chào|chao|cảm ơn|cam on|tư vấn|tu van|giải thích|giai thich|chi tiết|chi tiet|vậy còn|vay con|thế còn|the con|còn nếu|con neu|trường hợp|truong hop)\b/iu,
+  /\b(?:how|what|why|when|compare|difference|thaw|defrost|reheat|label|opened|unopened|hello|hi|thank|explain)\b/iu,
+];
+
+/**
+ * Two-Tier Routing Classifier:
+ * - Tier 1 (0 Token, <0.01s): Short pure item/code lookups when catalog matches locally.
+ * - Tier 2 (Gemini API): Complex questions, comparisons, thawing/SOP logic, conversations,
+ *   follow-up pronouns, or queries with 0 Tier-1 matches.
+ */
+export function shouldRouteToGeminiTier2(
+  rawQuery: string,
+  tier1MatchedCount: number,
+  hasPriorConversation: boolean
+): boolean {
+  const q = rawQuery.trim();
+  if (!q) return false;
+  if (tier1MatchedCount === 0) return true;
+
+  const words = tokenizeWords(q);
+  if (words.length >= 5) return true;
+
+  for (const rx of COMPLEX_TIER2_PATTERNS) {
+    if (rx.test(q)) return true;
+  }
+
+  if (
+    hasPriorConversation &&
+    /\b(?:nó|no|đó|do|vậy|vay|thế|the|còn|con|này|nay|trên|tren)\b/iu.test(q)
+  ) {
+    return true;
+  }
+
+  return false;
 }

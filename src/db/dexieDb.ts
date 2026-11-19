@@ -39,6 +39,10 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   appLockPin: '',
   customColumns: [],
   autoSyncCloud: true,
+  footerLeftText:
+    'HỆ THỐNG TRA CỨU NỘI BỘ - BAN ẨM THỰC - SUN WORLD BA NA HILLS',
+  footerRightText: 'Developed by Le Hoang Phuc',
+  aiAssistantEnabled: true,
   updatedAt: 0,
 };
 

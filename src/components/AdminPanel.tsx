@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Bot,
   Check,
   Cloud,
   Columns3,
@@ -1181,6 +1182,52 @@ export function AdminPanel({
                       </div>
                     )}
 
+                    {/* AI Assistant Toggle (Bước 1) */}
+                    {hasPerm('manage_config') && (
+                      <div className="rounded-2xl border border-[#DFD9CB] bg-[#FAF9F6] p-4 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="h-9 w-9 rounded-xl bg-[#122A47] text-[#E2C665] flex items-center justify-center shrink-0">
+                            <Bot size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-[14px] font-extrabold text-[#122A47]">
+                              Hiển thị nút &quot;Trợ lý AI&quot; nổi góc màn hình
+                            </h3>
+                            <p className="text-[12px] text-[#5C6573]">
+                              Bật hoặc tắt nút &quot;Trợ lý AI&quot; ở góc dưới bên phải (đồng bộ cho mọi thiết bị nếu bật Cloud).
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextEnabled =
+                              configDraft.aiAssistantEnabled === false;
+                            setConfigDraft((p) => ({
+                              ...p,
+                              aiAssistantEnabled: nextEnabled,
+                            }));
+                            void handleSaveConfig(undefined, {
+                              aiAssistantEnabled: nextEnabled,
+                            });
+                          }}
+                          className={`h-9 px-3.5 rounded-xl font-bold text-[12.5px] flex items-center gap-1.5 transition-colors shrink-0 ${
+                            configDraft.aiAssistantEnabled !== false
+                              ? 'bg-[#0F5E6E] text-white hover:opacity-90'
+                              : 'bg-[#E5E7EB] text-[#374151] hover:bg-[#D1D5DB]'
+                          }`}
+                        >
+                          <Bot size={14} />
+                          <span>
+                            {configDraft.aiAssistantEnabled !== false
+                              ? 'Đang BẬT (Nhấn để Tắt)'
+                              : 'Đang TẮT (Nhấn để Bật)'}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Custom Columns Manager */}
                     {hasPerm('manage_config') && (
                       <div className="rounded-2xl border border-[#DFD9CB] bg-white p-4 space-y-3">
@@ -1363,6 +1410,46 @@ export function AdminPanel({
                                   mobileTitleLine2: e.target.value,
                                 }))
                               }
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Nội dung Footer bên trái (Chân trang)
+                            </label>
+                            <input
+                              value={
+                                configDraft.footerLeftText ??
+                                DEFAULT_SYSTEM_CONFIG.footerLeftText ??
+                                ''
+                              }
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  footerLeftText: e.target.value,
+                                }))
+                              }
+                              placeholder="HỆ THỐNG TRA CỨU NỘI BỘ - BAN ẨM THỰC - SUN WORLD BA NA HILLS"
+                              className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[12px] font-bold text-[#2B3647] mb-1">
+                              Nội dung Footer bên phải (Tác giả / Bản quyền)
+                            </label>
+                            <input
+                              value={
+                                configDraft.footerRightText ??
+                                DEFAULT_SYSTEM_CONFIG.footerRightText ??
+                                ''
+                              }
+                              onChange={(e) =>
+                                setConfigDraft((p) => ({
+                                  ...p,
+                                  footerRightText: e.target.value,
+                                }))
+                              }
+                              placeholder="Developed by Le Hoang Phuc"
                               className="w-full h-10 rounded-xl border border-[#D8D2C2] px-3 text-[13px]"
                             />
                           </div>

@@ -12,7 +12,6 @@ import {
   House,
   LayoutGrid,
   List,
-  Loader2,
   Lock,
   Megaphone,
   PackageSearch,
@@ -68,7 +67,11 @@ import {
   type RealtimeConnectionState,
 } from './services/storageService';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
-import { normalizeText, runSmartSearch } from './utils/smartSearch';
+import {
+  getHighlightSegments,
+  normalizeText,
+  runSmartSearch,
+} from './utils/smartSearch';
 import { AdminPanel } from './components/AdminPanel';
 import { AIChatbox } from './components/AIChatbox';
 import { MyHistoryPanel } from './components/MyHistoryPanel';
@@ -136,13 +139,16 @@ interface ExtraLabels {
   thawRules: string[];
   tableReadPoints: string[];
   art8MatchTitle: string;
+  askFloatingAiBtn: string;
+  clearFastBtn: string;
+  foundMatchesLabel: string;
 }
 
 const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
   VI: {
-    aiTag: 'Tìm thông minh AI',
-    aiSearching: 'AI đang phân tích...',
-    aiButtonTitle: 'Nhấn để AI phân tích ngữ cảnh & đồng nghĩa',
+    aiTag: 'Hỏi AI',
+    aiSearching: 'AI đang tìm...',
+    aiButtonTitle: 'Tìm kiếm thông minh theo ngữ nghĩa & từ đồng nghĩa bằng AI',
     aiBannerTitle: 'Gợi ý ngữ nghĩa AI',
     aiLegalNotice: 'Thông số hiển thị giữ nguyên 100% từ văn bản Quyết định 107/2026/QĐ-SHE/SG.',
     aiDismiss: 'Tắt gợi ý AI',
@@ -156,8 +162,8 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
     copyShort: 'Sao chép',
     mobileTitleLine1: 'TRA CỨU BẢO QUẢN & HSD THỰC PHẨM',
     mobileTitleLine2: 'KHỐI SHE · QĐ 107/2026 (SHE-QĐ-FB13)',
-    mobileSearchPlaceholder: 'Tìm món, mã SHE-01, nhóm, không cấp đông...',
-    desktopSearchPlaceholder: 'Tìm tên loại thực phẩm, mã SHE-01, nhóm hàng, hoặc quy trình bảo quản...',
+    mobileSearchPlaceholder: 'Tìm thực phẩm, mã SHE-01, nhóm hàng, quy định...',
+    desktopSearchPlaceholder: 'Tìm loại thực phẩm, mã SHE-01, nhóm hàng hoặc từ khóa bảo quản...',
     footerInternal: 'HỆ THỐNG TRA CỨU NỘI BỘ - BAN ẨM THỰC - SUN WORLD BA NA HILLS',
     historyBtn: 'Lịch sử',
     historyTitle: 'Lịch sử tra cứu của tôi',
@@ -216,9 +222,12 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
       '"Theo NSX": Theo bao bì; nếu không ghi hướng dẫn cho nhiệt độ đó thì không áp dụng. Không cộng dồn các cột.',
     ],
     art8MatchTitle: 'CẢNH BÁO ĐIỀU 8 — KHÔNG CẤP ĐÔNG',
+    askFloatingAiBtn: 'Hỏi sâu Trợ lý AI',
+    clearFastBtn: 'Xóa nhanh',
+    foundMatchesLabel: 'quy định phù hợp',
   },
   EN: {
-    aiTag: 'AI Smart Search',
+    aiTag: 'Ask AI',
     aiSearching: 'AI analyzing...',
     aiButtonTitle: 'Run AI semantic & ingredient matching',
     aiBannerTitle: 'AI Semantic Match',
@@ -294,9 +303,12 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
       '"Per manufacturer": Follow label; if omitted for that band, consider prohibited. Never add columns together.',
     ],
     art8MatchTitle: 'ARTICLE 8 WARNING — DO NOT FREEZE',
+    askFloatingAiBtn: 'Ask AI Assistant deeper',
+    clearFastBtn: 'Clear',
+    foundMatchesLabel: 'matching rules',
   },
   KO: {
-    aiTag: 'AI 스마트 검색',
+    aiTag: 'AI 질문',
     aiSearching: 'AI 분석 중...',
     aiButtonTitle: 'AI 문맥 및 동의어 검색 실행',
     aiBannerTitle: 'AI 의미 기반 추천',
@@ -372,9 +384,12 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
       '“제조사 기준”: 포장 표시 우선(해당 온도 안내 없으면 금지). 열 간 기간 합산 금지.',
     ],
     art8MatchTitle: '제8조 주의 — 냉동 금지 품목',
+    askFloatingAiBtn: 'AI 도우미에게 자세히 질문',
+    clearFastBtn: '빠른 삭제',
+    foundMatchesLabel: '일치하는 규정',
   },
   HI: {
-    aiTag: 'AI स्मार्ट खोज',
+    aiTag: 'AI पूछें',
     aiSearching: 'AI विश्लेषण...',
     aiButtonTitle: 'AI संदर्भ और समानार्थी खोज चलाएं',
     aiBannerTitle: 'AI प्रासंगिक मिलान',
@@ -450,6 +465,9 @@ const EXTRA_LABELS: Record<Lang, ExtraLabels> = {
       '“NSX अनुसार”: पैकेट अनुसार; न होने पर वर्जित मानें। कॉलम न जोड़ें।',
     ],
     art8MatchTitle: 'अनुच्छेद 8 चेतावनी — फ़्रीज़ न करें',
+    askFloatingAiBtn: 'AI सहायक से विस्तार से पूछें',
+    clearFastBtn: 'साफ़ करें',
+    foundMatchesLabel: 'उपयुक्त नियम मिले',
   },
 };
 
@@ -461,6 +479,27 @@ const LANG_FULL_NAMES: Record<Lang, string> = {
   KO: '한국어',
   HI: 'हिन्दी',
 };
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const segments = useMemo(() => getHighlightSegments(text, query), [text, query]);
+  if (!query.trim()) return <>{text}</>;
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.matched ? (
+          <mark
+            key={i}
+            className="bg-[#FEF08A] text-[#122A47] font-extrabold rounded-[3px] px-0.5"
+          >
+            {seg.text}
+          </mark>
+        ) : (
+          <React.Fragment key={i}>{seg.text}</React.Fragment>
+        )
+      )}
+    </>
+  );
+}
 
 function SheMonogramEmblem() {
   return (
@@ -711,21 +750,16 @@ export default function App() {
     return () => mq.removeEventListener('change', sync);
   }, []);
 
-  // AI Semantic Search state
-  const [aiMatchedCodes, setAiMatchedCodes] = useState<string[]>([]);
-  const [aiReason, setAiReason] = useState<string>('');
-  const [aiLoading, setAiLoading] = useState<boolean>(false);
-  const [aiLastQuery, setAiLastQuery] = useState<string>('');
+  // Optional hand-off prompt when user explicitly opens floating Trợ lý AI
+  const [chatTriggerPrompt, setChatTriggerPrompt] = useState<{
+    id: number;
+    text: string;
+  } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const groupDropdownRef = useRef<HTMLDivElement | null>(null);
   const langDropdownRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-  const aiAbortRef = useRef<AbortController | null>(null);
-  const aiLastKeyRef = useRef<string>('');
-  const aiEndpointAvailableRef = useRef<boolean>(
-    typeof window !== 'undefined' ? window.location.protocol !== 'file:' : true
-  );
 
   const openItemDetail = useCallback((item: FoodItem) => {
     setSelectedItem(item);
@@ -794,10 +828,6 @@ export default function App() {
         document.activeElement === searchInputRef.current
       ) {
         setQuery('');
-        setAiMatchedCodes([]);
-        setAiReason('');
-        setAiLastQuery('');
-        aiLastKeyRef.current = '';
         searchInputRef.current?.blur();
       }
       if (event.key === 'Escape') {
@@ -817,118 +847,8 @@ export default function App() {
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
       }
-      aiAbortRef.current?.abort();
     };
   }, []);
-
-  const triggerAiSearch = useCallback(
-    async (targetQuery: string, targetLang: Lang) => {
-      const q = targetQuery.trim();
-      if (!q) {
-        setAiMatchedCodes([]);
-        setAiReason('');
-        setAiLastQuery('');
-        aiLastKeyRef.current = '';
-        return;
-      }
-
-      if (!aiEndpointAvailableRef.current) {
-        setAiMatchedCodes([]);
-        setAiReason('');
-        return;
-      }
-
-      const requestKey = `${targetLang}::${q.toLowerCase()}`;
-      aiAbortRef.current?.abort();
-      const controller = new AbortController();
-      aiAbortRef.current = controller;
-
-      setAiLoading(true);
-      try {
-        const response = await fetch('/api/ai-search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, lang: targetLang }),
-          signal: controller.signal,
-        });
-
-        if (response.status === 404 || response.status === 405) {
-          aiEndpointAvailableRef.current = false;
-        }
-        if (!response.ok) {
-          setAiMatchedCodes([]);
-          setAiReason('');
-          return;
-        }
-
-        const data = (await response.json()) as {
-          matchedCodes?: string[];
-          reason?: string;
-        };
-        if (controller.signal.aborted) return;
-        aiLastKeyRef.current = requestKey;
-        setAiMatchedCodes(
-          Array.isArray(data.matchedCodes) ? data.matchedCodes : []
-        );
-        setAiReason(typeof data.reason === 'string' ? data.reason : '');
-        setAiLastQuery(q);
-      } catch (err: unknown) {
-        if ((err as { name?: string })?.name !== 'AbortError') {
-          setAiMatchedCodes([]);
-          setAiReason('');
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setAiLoading(false);
-        }
-      }
-    },
-    []
-  );
-
-  // Automatic smart debounced AI boost on Table tab when online
-  useEffect(() => {
-    if (workspaceTab !== 'table') return;
-    const q = query.trim();
-    if (!q) {
-      aiAbortRef.current?.abort();
-      aiLastKeyRef.current = '';
-      setAiLoading(false);
-      setAiMatchedCodes([]);
-      setAiReason('');
-      setAiLastQuery('');
-      return;
-    }
-
-    const requestKey = `${lang}::${q.toLowerCase()}`;
-    if (aiLastQuery && aiLastQuery.toLowerCase() !== q.toLowerCase()) {
-      setAiMatchedCodes([]);
-      setAiReason('');
-    }
-    if (aiLastKeyRef.current === requestKey) return;
-
-    const localInstant = runSmartSearch({
-      items,
-      query: q,
-      lang,
-      aiMatchedCodes: [],
-    });
-
-    const wordCount = q.split(/\s+/).filter(Boolean).length;
-    const isCodeQuery = /^she[- ]?\d{1,2}$/i.test(q);
-    const shouldAutoTriggerAi =
-      isOnline &&
-      !isCodeQuery &&
-      (localInstant.length === 0 || wordCount >= 2 || q.length >= 6);
-
-    if (!shouldAutoTriggerAi) return;
-
-    const timer = window.setTimeout(() => {
-      void triggerAiSearch(q, lang);
-    }, 520);
-
-    return () => window.clearTimeout(timer);
-  }, [query, lang, workspaceTab, triggerAiSearch, aiLastQuery, items, isOnline]);
 
   const handleSelectGroup = (nextGroup: string) => {
     setGroup(nextGroup);
@@ -940,15 +860,10 @@ export default function App() {
   };
 
   const resetFilters = () => {
-    aiAbortRef.current?.abort();
     setQuery('');
     setGroup('ALL');
     setStorageFilter('all');
     setQuickHygiene('none');
-    setAiMatchedCodes([]);
-    setAiReason('');
-    setAiLastQuery('');
-    aiLastKeyRef.current = '';
   };
 
   const filteredItems = useMemo(() => {
@@ -976,21 +891,12 @@ export default function App() {
         items: list,
         query: q,
         lang,
-        aiMatchedCodes,
       });
     }
 
     list.sort((a, b) => (a.order ?? a.n) - (b.order ?? b.n) || a.n - b.n);
     return list;
-  }, [
-    items,
-    query,
-    group,
-    storageFilter,
-    quickHygiene,
-    lang,
-    aiMatchedCodes,
-  ]);
+  }, [items, query, group, storageFilter, quickHygiene, lang]);
 
   const filteredNoFreeze = useMemo(() => {
     const qNorm = normalizeText(query.trim());
@@ -1119,6 +1025,24 @@ ${t.sourceDoc}`;
     Boolean(systemConfig.logoUrl) &&
     systemConfig.logoUrl !== '/bnc-logo.jpg' &&
     systemConfig.logoUrl !== '/she-logo.svg';
+
+  const defaultFooterLeft = DEFAULT_SYSTEM_CONFIG.footerLeftText || '';
+  const configuredFooterLeft = systemConfig.footerLeftText;
+  const resolvedFooterLeft =
+    configuredFooterLeft !== undefined
+      ? configuredFooterLeft.trim() === ''
+        ? ''
+        : configuredFooterLeft.trim() === defaultFooterLeft
+          ? ex.footerInternal
+          : configuredFooterLeft
+      : ex.footerInternal;
+
+  const resolvedFooterRight =
+    systemConfig.footerRightText !== undefined
+      ? systemConfig.footerRightText
+      : DEFAULT_SYSTEM_CONFIG.footerRightText || 'Developed by Le Hoang Phuc';
+
+  const isFloatingAiEnabled = systemConfig.aiAssistantEnabled !== false;
 
   return (
     <div
@@ -1306,23 +1230,28 @@ ${t.sourceDoc}`;
 
       <OfflineStatusBadge isOnline={isOnline} lang={lang} />
 
-      {/* Compact Sticky Search Dock */}
-      <div className="sticky top-[var(--safe-area-inset-top)] z-40 bg-[#122A47]/95 backdrop-blur-md border-b border-[#C9A227]/70 shadow-[0_8px_24px_rgba(18,42,71,0.16)]">
-        <div className="mx-auto max-w-[1360px] px-3.5 sm:px-6 py-2 sm:py-3">
+      {/* Sticky Smart Search Bar */}
+      <div className="sticky top-[var(--safe-area-inset-top)] z-40 bg-[#F6F4EF]/95 backdrop-blur-md border-b border-[#E2DDD0]">
+        <div className="mx-auto max-w-[1360px] px-3.5 sm:px-6 py-2.5 sm:py-3.5">
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (workspaceTab !== 'table') setWorkspaceTab('table');
-              void triggerAiSearch(query, lang);
+              const trimmed = query.trim();
+              if (trimmed && filteredItems.length === 0 && isFloatingAiEnabled) {
+                setChatTriggerPrompt({ id: Date.now(), text: trimmed });
+              } else {
+                searchInputRef.current?.blur();
+              }
             }}
             className="relative flex items-center"
           >
             <Search
-              className="pointer-events-none absolute left-3 sm:left-3.5 text-[#1E4A75]"
-              size={17}
+              size={18}
+              className="pointer-events-none absolute left-3.5 sm:left-4 text-[#5C6573]"
             />
             <input
               ref={searchInputRef}
+              type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={
@@ -1330,52 +1259,45 @@ ${t.sourceDoc}`;
                   ? ex.mobileSearchPlaceholder
                   : ex.desktopSearchPlaceholder
               }
-              aria-label={t.searchPlaceholder}
-              className={`w-full h-[42px] sm:h-[50px] bg-white border border-[#D8D2C2] focus:border-[#C9A227] rounded-xl pl-9 sm:pl-10 ${
-                query ? 'pr-[104px] sm:pr-44' : 'pr-[72px] sm:pr-40'
-              } text-[13.5px] sm:text-[15px] font-medium text-[#182230] placeholder:text-[#7A8291] shadow-sm transition-colors`}
+              aria-label={ex.desktopSearchPlaceholder}
+              className={`w-full h-[44px] sm:h-[52px] bg-white border border-[#D8D2C2] focus:border-[#1E4A75] rounded-xl pl-10 sm:pl-11 ${
+                query ? 'pr-[132px] sm:pr-[204px]' : 'pr-4'
+              } text-[14px] sm:text-[15.5px] font-medium text-[#182230] placeholder:text-[#7A8291] shadow-[0_6px_18px_rgba(18,42,71,0.05)] transition-colors`}
             />
 
-            <div className="absolute right-1.5 flex items-center gap-1">
+            <div className="absolute right-1.5 sm:right-2 flex items-center gap-1.5">
               {query && (
                 <button
                   type="button"
                   onClick={() => {
-                    aiAbortRef.current?.abort();
                     setQuery('');
-                    setAiMatchedCodes([]);
-                    setAiReason('');
-                    setAiLastQuery('');
-                    aiLastKeyRef.current = '';
                     searchInputRef.current?.focus();
                   }}
-                  aria-label={t.clearSearch}
-                  className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg text-[#6B7280] hover:text-[#182230] hover:bg-[#F2EFE8] flex items-center justify-center transition-colors"
+                  aria-label={ex.clearFastBtn}
+                  title={ex.clearFastBtn}
+                  className="h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg border border-[#E2DDD0] bg-[#FAF9F6] hover:bg-[#EFECE4] text-[#122A47] text-[12px] font-bold flex items-center gap-1 whitespace-nowrap transition-colors"
                 >
-                  <X size={16} />
+                  <X size={15} className="text-[#9A2E2A]" />
+                  <span className="hidden sm:inline">{ex.clearFastBtn}</span>
                 </button>
               )}
 
-              <button
-                type="submit"
-                disabled={!query.trim() || aiLoading}
-                title={ex.aiButtonTitle}
-                className={`h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg text-[11.5px] sm:text-[12px] font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-                  query.trim()
-                    ? 'bg-[#1E4A75] text-white hover:bg-[#122A47]'
-                    : 'bg-[#F2EFE8] text-[#8A92A0] cursor-not-allowed'
-                }`}
-              >
-                {aiLoading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Sparkles size={14} />
-                )}
-                <span className="hidden sm:inline">
-                  {aiLoading ? ex.aiSearching : ex.aiTag}
-                </span>
-                <span className="sm:hidden">AI</span>
-              </button>
+              {query.trim() && isFloatingAiEnabled && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setChatTriggerPrompt({
+                      id: Date.now(),
+                      text: query.trim(),
+                    })
+                  }
+                  title={ex.askFloatingAiBtn}
+                  className="h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg bg-[#122A47] hover:bg-[#1E4A75] text-white text-[11.5px] sm:text-[12px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors"
+                >
+                  <Sparkles size={13} className="text-[#E2C665]" />
+                  <span>{ex.aiTag}</span>
+                </button>
+              )}
             </div>
           </form>
         </div>
@@ -1383,6 +1305,7 @@ ${t.sourceDoc}`;
 
       {/* Main Content */}
       <main className="mx-auto w-full max-w-[1360px] flex-1 px-3.5 sm:px-6 py-3.5 sm:py-5 pb-10">
+
         {systemConfig.alertBannerEnabled && systemConfig.alertBannerText && (
           <div className="mb-3 rounded-xl border border-[#DFBA51] bg-[#FDF8EB] px-3.5 py-2.5 flex items-center gap-2 text-[12.5px] font-bold text-[#7D5B0F]">
             <Megaphone size={15} className="shrink-0 text-[#9A6700]" />
@@ -1652,57 +1575,25 @@ ${t.sourceDoc}`;
               </div>
             </div>
 
-            {/* AI Semantic Banner */}
-            {query.trim() && (aiReason || aiMatchedCodes.length > 0) && (
-              <div className="fade-in mt-4 rounded-xl border border-[#D4E2EA] bg-[#F1F7FA] px-4 py-3 flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2.5 min-w-0">
-                  <Sparkles
-                    size={16}
-                    className="text-[#1E4A75] shrink-0 mt-0.5"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-bold text-[#122A47] leading-snug">
-                      {ex.aiBannerTitle}
-                      {aiMatchedCodes.length > 0 && (
-                        <span className="font-mono tabular-nums text-[#1E4A75]">
-                          {' '}
-                          · {aiMatchedCodes.length}
-                        </span>
-                      )}
-                    </p>
-                    {aiReason && (
-                      <p className="text-[13px] text-[#2B3647] mt-0.5 leading-snug">
-                        {aiReason}
-                      </p>
-                    )}
-                    <p className="text-[11px] font-medium text-[#5C6573] mt-1">
-                      {ex.aiLegalNotice}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAiMatchedCodes([]);
-                    setAiReason('');
-                  }}
-                  aria-label={ex.aiDismiss}
-                  className="text-[12px] font-semibold text-[#1E4A75] hover:underline whitespace-nowrap shrink-0 py-1"
-                >
-                  {ex.aiDismiss}
-                </button>
-              </div>
-            )}
-
             {/* Results Summary Bar */}
             <div className="flex flex-wrap items-center justify-between gap-2 mt-5 mb-3">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[15px] font-bold text-[#182230]">
-                <span>
-                  <span className="font-mono tabular-nums text-[#1E4A75] font-extrabold">
-                    {filteredItems.length}
-                  </span>{' '}
-                  {t.results}
-                </span>
+                {query.trim() || hasActiveFilters ? (
+                  <span>
+                    {lang === 'VI' ? 'Tìm thấy ' : ''}
+                    <span className="font-mono tabular-nums text-[#1E4A75] font-extrabold">
+                      {filteredItems.length}
+                    </span>{' '}
+                    {ex.foundMatchesLabel}
+                  </span>
+                ) : (
+                  <span>
+                    <span className="font-mono tabular-nums text-[#1E4A75] font-extrabold">
+                      {filteredItems.length}
+                    </span>{' '}
+                    {t.results}
+                  </span>
+                )}
                 {group !== 'ALL' && (
                   <span className="text-[13px] font-medium text-[#5C6573]">
                     · {translateGroup(group, lang)}
@@ -1734,14 +1625,19 @@ ${t.sourceDoc}`;
                   {t.noResultDesc}
                 </p>
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-                  {query.trim() && !aiLoading && (
+                  {query.trim() && isFloatingAiEnabled && (
                     <button
                       type="button"
-                      onClick={() => void triggerAiSearch(query, lang)}
+                      onClick={() =>
+                        setChatTriggerPrompt({
+                          id: Date.now(),
+                          text: query.trim(),
+                        })
+                      }
                       className="min-h-[44px] px-4 py-2 rounded-xl border border-[#1E4A75] bg-white text-[#1E4A75] font-bold text-[13px] hover:bg-[#F1F7FA] flex items-center gap-1.5"
                     >
                       <Sparkles size={15} />
-                      <span>{ex.aiTag}</span>
+                      <span>{ex.askFloatingAiBtn}</span>
                     </button>
                   )}
                   <button
@@ -1795,7 +1691,10 @@ ${t.sourceDoc}`;
                         </div>
 
                         <p className="text-[11.5px] font-medium text-[#5C6573] mt-1.5 leading-snug line-clamp-1">
-                          {translateGroup(item.g, lang)}
+                          <HighlightedText
+                            text={translateGroup(item.g, lang)}
+                            query={query}
+                          />
                         </p>
 
                         <button
@@ -1804,11 +1703,11 @@ ${t.sourceDoc}`;
                           className="text-left mt-2 w-full group"
                         >
                           <h3 className="font-extrabold text-[16.5px] leading-snug text-[#122A47] group-hover:text-[#1E4A75] transition-colors">
-                            {itemName}
+                            <HighlightedText text={itemName} query={query} />
                           </h3>
                           {lang !== 'VI' && (
                             <p className="text-[12px] font-medium text-[#64748B] mt-0.5 line-clamp-1">
-                              {item.name}
+                              <HighlightedText text={item.name} query={query} />
                             </p>
                           )}
                         </button>
@@ -1990,10 +1889,13 @@ ${t.sourceDoc}`;
                           className="text-left"
                         >
                           <p className="font-bold text-[14px] text-[#122A47] hover:text-[#1E4A75]">
-                            {itemName}
+                            <HighlightedText text={itemName} query={query} />
                           </p>
                           <p className="text-[11.5px] text-[#5C6573] truncate">
-                            {translateGroup(item.g, lang)}
+                            <HighlightedText
+                              text={translateGroup(item.g, lang)}
+                              query={query}
+                            />
                           </p>
                         </button>
                         <div>{renderTableBadge(item.room, roomVal, 'amber')}</div>
@@ -2068,7 +1970,7 @@ ${t.sourceDoc}`;
                               )}
                             </div>
                             <p className="font-bold text-[14.5px] text-[#122A47] mt-0.5 leading-snug">
-                              {itemName}
+                              <HighlightedText text={itemName} query={query} />
                             </p>
                           </button>
 
@@ -2347,8 +2249,8 @@ ${t.sourceDoc}`;
       {/* Footer */}
       <footer className="border-t border-[#C9A227]/70 bg-[#122A47]">
         <div className="mx-auto flex w-full max-w-[1360px] flex-col sm:flex-row items-center justify-between gap-1 px-4 sm:px-6 py-4 pb-16 sm:pb-4 sm:pr-44 text-[12.5px] font-semibold text-[#E2C665]">
-          <span>{ex.footerInternal}</span>
-          <span className="font-normal">Developed by Le Hoang Phuc</span>
+          <span>{resolvedFooterLeft}</span>
+          <span className="font-normal">{resolvedFooterRight}</span>
         </div>
       </footer>
 
@@ -2723,12 +2625,13 @@ ${t.sourceDoc}`;
       />
 
       {/* Smart Compliance AI Chatbox */}
-      {!isAppLocked && (
+      {!isAppLocked && isFloatingAiEnabled && (
         <AIChatbox
           items={items}
           lang={lang}
           isOnline={isOnline}
           onSelectItem={(item) => openItemDetail(item)}
+          externalPrompt={chatTriggerPrompt}
         />
       )}
     </div>
